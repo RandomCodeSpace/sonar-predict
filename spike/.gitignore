@@ -1,0 +1,11 @@
+# Maven build output
+target/
+dependency-reduced-pom.xml
+
+# Vendored analyzer plugin jar — not committed (large binary; fetch separately).
+plugins/*.jar
+
+# Build artifacts and IDE metadata are not committed.
+.settings/
+.project
+.classpath

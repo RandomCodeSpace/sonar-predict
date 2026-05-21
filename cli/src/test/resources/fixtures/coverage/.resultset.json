@@ -1,0 +1,13 @@
+{
+  "RSpec": {
+    "coverage": {
+      "lib/order.rb": {
+        "lines": [null, 1, 1, 0, null, 4]
+      },
+      "lib/cart.rb": {
+        "lines": [null, 0, 2]
+      }
+    },
+    "timestamp": 1700000000
+  }
+}

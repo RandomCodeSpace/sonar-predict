@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profile>
+  <name>OnlyS1118</name>
+  <language>java</language>
+  <rules>
+    <rule>
+      <repositoryKey>java</repositoryKey>
+      <key>S1118</key>
+      <priority>MAJOR</priority>
+      <parameters></parameters>
+    </rule>
+  </rules>
+</profile>

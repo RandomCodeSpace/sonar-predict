@@ -1,0 +1,16 @@
+target/
+*.class
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+docs/superpowers/
+
+# maven-shade-plugin scratch file (regenerated each package run)
+dependency-reduced-pom.xml
+
+# Vendored analyzer plugin JARs (~160 MB) — fetched via daemon/plugins/fetch.sh,
+# verified against daemon/plugins/CHECKSUMS.txt. Not committed to keep the repo lean.
+daemon/plugins/*.jar

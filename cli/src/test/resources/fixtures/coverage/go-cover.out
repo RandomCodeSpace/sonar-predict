@@ -1,0 +1,6 @@
+mode: set
+example.com/demo/calc.go:3.20,5.10 2 1
+example.com/demo/calc.go:7.2,9.16 3 1
+example.com/demo/calc.go:11.2,12.4 1 0
+example.com/demo/util.go:4.13,6.2 2 0
+example.com/demo/util.go:8.2,8.20 1 1
