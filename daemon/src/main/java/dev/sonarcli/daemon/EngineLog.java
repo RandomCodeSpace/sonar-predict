@@ -28,7 +28,26 @@ public final class EngineLog implements LogOutput {
      * Idempotent and safe to call repeatedly.
      */
     public static void install() {
-        SonarLintLogger.get().setTarget(new EngineLog());
+        installAndCapture();
+    }
+
+    /**
+     * Registers a fresh {@code EngineLog} as the global SonarLint log target
+     * and returns it, so a caller can later inspect the engine messages that
+     * target receives.
+     *
+     * <p>The SonarLint engine logs every sensor message — including a swallowed
+     * {@code Error executing sensor: '<name>'} — through the global
+     * {@link SonarLintLogger} target. Capturing the installed instance is what
+     * lets {@code AnalysisService} detect a crashed JS/TS/CSS analyzer and
+     * surface it as a warning rather than a silent zero.
+     *
+     * @return the {@code EngineLog} now installed as the global target
+     */
+    public static EngineLog installAndCapture() {
+        EngineLog target = new EngineLog();
+        SonarLintLogger.get().setTarget(target);
+        return target;
     }
 
     @Override

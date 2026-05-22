@@ -38,10 +38,16 @@ import dev.sonarcli.protocol.Json;
  * {@code JavaScriptRuleSet} subsets: the bundled profile is the analyzer's own
  * recommended rule set and covers all twelve v1 languages, not just three.
  *
- * <p>TypeScript carries no profile resource of its own — the JavaScript
- * analyzer drives {@code .ts} files using the {@code javascript} rule
- * repository, so {@link SonarLanguage#TS} maps to the {@code javascript}
- * profile here.
+ * <p><b>TypeScript.</b> The JavaScript analyzer drives both {@code .js} and
+ * {@code .ts} files, but its TypeScript sensor activates rules from a separate
+ * {@code typescript} rule repository ({@code typescript:Sxxx}) — registered
+ * programmatically by the plugin, with no {@code Sonar_way_profile.json}
+ * resource of its own. The analyzer keeps the {@code javascript} and
+ * {@code typescript} repositories in lockstep on rule numbers, so this class
+ * re-emits the JavaScript Sonar way rule numbers under the {@code typescript:}
+ * prefix for {@link SonarLanguage#TS}. Emitting them as {@code javascript:}
+ * would leave the TypeScript sensor with an empty active-rule set — every
+ * {@code .ts} file analyzed clean, with no issue and no warning.
  */
 public final class SonarWayProfiles {
 
@@ -69,6 +75,19 @@ public final class SonarWayProfiles {
     /** {@code Web} is the HTML analyzer's repo; kept separate so the map above stays ≤10 entries. */
     private static final Map<String, Set<SonarLanguage>> WEB_REPO =
             Map.of("Web", Set.of(SonarLanguage.HTML));
+
+    /**
+     * Engine rule-key repository prefix for a language, when it differs from
+     * the profile-resource directory the rules were read from.
+     *
+     * <p>Only {@link SonarLanguage#TS} needs this: its rules live in the
+     * {@code javascript} profile resource, but the JavaScript analyzer's
+     * TypeScript sensor activates them from the {@code typescript} rule
+     * repository. Every other language's engine repository equals its
+     * resource directory, so it is absent here.
+     */
+    private static final Map<SonarLanguage, String> ENGINE_REPO_OVERRIDE =
+            Map.of(SonarLanguage.TS, "typescript");
 
     private final Map<SonarLanguage, List<String>> ruleKeysByLanguage;
 
@@ -119,8 +138,13 @@ public final class SonarWayProfiles {
                 if (languages.isEmpty()) {
                     continue;
                 }
-                List<String> ruleKeys = readRuleKeys(jar, entry, repo);
+                List<String> bareKeys = readRuleKeys(jar, entry);
                 for (SonarLanguage language : languages) {
+                    // The engine rule-key prefix is the resource-directory repo,
+                    // unless the language overrides it (TypeScript: rules read
+                    // from the `javascript` resource, activated under `typescript`).
+                    String engineRepo = ENGINE_REPO_OVERRIDE.getOrDefault(language, repo);
+                    List<String> ruleKeys = prefix(bareKeys, engineRepo);
                     byLanguage.merge(language, ruleKeys, SonarWayProfiles::mergeDistinct);
                 }
             }
@@ -147,8 +171,8 @@ public final class SonarWayProfiles {
         return merged;
     }
 
-    /** Reads the {@code ruleKeys} array and prefixes each bare key with {@code <repo>:}. */
-    private static List<String> readRuleKeys(JarFile jar, JarEntry entry, String repo)
+    /** Reads the {@code ruleKeys} array — the bare SonarQube keys, unprefixed. */
+    private static List<String> readRuleKeys(JarFile jar, JarEntry entry)
             throws IOException {
         JsonNode json;
         try (InputStream in = jar.getInputStream(entry)) {
@@ -164,8 +188,17 @@ public final class SonarWayProfiles {
         }
         for (JsonNode keyNode : array) {
             if (keyNode.isTextual() && !keyNode.asText().isBlank()) {
-                keys.add(repo + ":" + keyNode.asText());
+                keys.add(keyNode.asText());
             }
+        }
+        return keys;
+    }
+
+    /** Prefixes each bare SonarQube key with {@code <repo>:} to form the engine rule key. */
+    private static List<String> prefix(List<String> bareKeys, String repo) {
+        List<String> keys = new ArrayList<>(bareKeys.size());
+        for (String bare : bareKeys) {
+            keys.add(repo + ":" + bare);
         }
         return keys;
     }

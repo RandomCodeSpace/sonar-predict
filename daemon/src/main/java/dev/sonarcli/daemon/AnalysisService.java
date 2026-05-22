@@ -12,6 +12,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.sonarsource.sonarlint.core.analysis.AnalysisScheduler;
@@ -80,6 +82,14 @@ public final class AnalysisService implements AutoCloseable {
     private final Path workDir;
 
     /**
+     * The global SonarLint log target this service installed. The engine routes
+     * every sensor message through it, so inspecting the messages produced
+     * during one analysis reveals a swallowed {@code Error executing sensor}
+     * crash — see {@link #sensorFailureWarnings}.
+     */
+    private final EngineLog engineLog;
+
+    /**
      * Serializes {@link #analyze} calls and gates {@link #close} so shutdown
      * waits for any in-flight analysis. A fair lock keeps a shutdown from
      * starving behind a stream of analyses.
@@ -114,7 +124,13 @@ public final class AnalysisService implements AutoCloseable {
      * @param pluginsDir directory holding the vendored analyzer plugin JARs
      */
     public AnalysisService(Path pluginsDir) {
-        EngineLog.install();
+        // One EngineLog instance for the whole service: installed as the global
+        // SonarLint target (PluginsLoader.load requires a target) and handed to
+        // the AnalysisScheduler below. The scheduler re-installs its supplied
+        // LogOutput as the global target on its worker thread, so passing the
+        // SAME instance is what keeps every per-analysis sensor message — most
+        // importantly a swallowed "Error executing sensor" — visible here.
+        this.engineLog = EngineLog.installAndCapture();
         this.loadedPlugins = PluginRuntime.loadAll(pluginsDir);
         // The real loaded-language set: an analyzer skipped at load time (e.g.
         // the JS/TS/CSS plugin with no Node.js runtime) is absent here, so
@@ -130,7 +146,7 @@ public final class AnalysisService implements AutoCloseable {
                 .setClientPid(ProcessHandle.current().pid())
                 .build();
         this.scheduler =
-                new AnalysisScheduler(schedulerConfig, loadedPlugins, new EngineLog());
+                new AnalysisScheduler(schedulerConfig, loadedPlugins, engineLog);
     }
 
     /**
@@ -230,6 +246,12 @@ public final class AnalysisService implements AutoCloseable {
                 Set.of(),
                 Map.of());
 
+        // Snapshot the engine log before posting: every analysis runs holding
+        // analysisLock, so the messages appended between here and the result
+        // belong to exactly this analysis. They are scanned below for a
+        // swallowed sensor crash the engine does not report any other way.
+        int engineLogMark = engineLog.messages().size();
+
         scheduler.post(command);
         AnalysisResults results = await(command.getFutureResult());
 
@@ -242,6 +264,17 @@ public final class AnalysisService implements AutoCloseable {
             warnings.add(new AnalysisWarning(
                     failed.relativePath(),
                     "analysis failed for this file"));
+        }
+
+        // The SonarLint engine swallows a sensor crash — it logs
+        // "Error executing sensor: '<name>'" and leaves failedAnalysisFiles
+        // empty. The JS/TS/CSS analyzer (an out-of-process Node bridge) is the
+        // realistic offender. Without this, a JS/TS/CSS file whose analyzer
+        // crashed would be reported as a silent clean zero. Surface it.
+        List<String> analysisLog = engineLog.messages();
+        if (engineLogMark < analysisLog.size()) {
+            warnings.addAll(sensorFailureWarnings(
+                    analysisLog.subList(engineLogMark, analysisLog.size())));
         }
 
         return new AnalyzeResponse(List.copyOf(issues), List.copyOf(warnings));
@@ -436,6 +469,72 @@ public final class AnalysisService implements AutoCloseable {
             }
         }
         return rules;
+    }
+
+    /**
+     * Engine sensor names that drive the JS/TS/CSS analyzers, mapped to the
+     * human label used in the surfaced warning. The SonarSource
+     * {@code javascript} plugin contributes two sensors — one for
+     * JavaScript/TypeScript, one for CSS — and a crash in either leaves the
+     * matching files unanalyzed.
+     */
+    private static final Map<String, String> JS_FAMILY_SENSORS = Map.of(
+            "JavaScript/TypeScript analysis", "JavaScript/TypeScript",
+            "CSS Rules", "CSS");
+
+    /** Matches the engine's {@code Error executing sensor: '<name>'} log line. */
+    private static final Pattern SENSOR_ERROR =
+            Pattern.compile("Error executing sensor: '([^']+)'");
+
+    /**
+     * Derives project-level {@link AnalysisWarning}s from a crashed analyzer
+     * sensor, so a file the engine could not analyze is never reported as a
+     * silent clean zero.
+     *
+     * <p><b>Why this is needed.</b> The embedded SonarLint engine
+     * <em>swallows</em> a sensor crash: {@code SensorsExecutor} catches the
+     * thrown exception, logs {@code Error executing sensor: '<name>'}, and
+     * returns — it does <em>not</em> add the affected files to
+     * {@link AnalysisResults#failedAnalysisFiles()}. The JS/TS/CSS analyzer is
+     * the realistic offender: it runs an out-of-process Node bridge, and a
+     * bridge failure (no Node, an unwritable temp directory, a bridge protocol
+     * error) surfaces as exactly such a swallowed sensor crash. Without this
+     * method the daemon would return {@code issueCount: 0, warnings: []} for a
+     * file that was never actually analyzed — the dangerous "silent clean".
+     *
+     * <p>This scans the engine log messages produced during one analysis for
+     * the {@code Error executing sensor: '<name>'} line and, for each crashed
+     * JS-family sensor ({@link #JS_FAMILY_SENSORS}), emits one project-level
+     * warning. It deliberately covers only the JS/TS/CSS sensors: every other
+     * v1 analyzer is in-process and a crash there propagates as a real
+     * exception rather than being swallowed.
+     *
+     * @param engineLogMessages the engine log lines emitted during the analysis
+     * @return one warning per distinct crashed JS-family sensor; empty when the
+     *         log shows no such crash
+     */
+    static List<AnalysisWarning> sensorFailureWarnings(List<String> engineLogMessages) {
+        Set<String> crashedLabels = new java.util.LinkedHashSet<>();
+        for (String message : engineLogMessages) {
+            if (message == null) {
+                continue;
+            }
+            Matcher matcher = SENSOR_ERROR.matcher(message);
+            if (matcher.find()) {
+                String label = JS_FAMILY_SENSORS.get(matcher.group(1));
+                if (label != null) {
+                    crashedLabels.add(label);
+                }
+            }
+        }
+        List<AnalysisWarning> warnings = new ArrayList<>();
+        for (String label : crashedLabels) {
+            warnings.add(new AnalysisWarning(
+                    null,
+                    label + " analyzer failed during analysis (the Node.js-based "
+                            + "analyzer crashed); matching files were not analyzed"));
+        }
+        return warnings;
     }
 
     /**

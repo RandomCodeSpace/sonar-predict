@@ -73,6 +73,27 @@ class RuleCatalogTest {
     }
 
     @Test
+    @DisplayName("typescript: rules mirror their javascript: siblings")
+    void lookup_typescriptRule_mirrorsJavascript() {
+        RuleMetadata ts = catalog.lookup("typescript:S1186");
+        assertNotNull(ts, "typescript:S1186 must be mirrored from javascript:S1186");
+        assertEquals("typescript:S1186", ts.ruleKey());
+        assertEquals("ts", ts.language());
+        assertTrue(VALID_SEVERITIES.contains(ts.severity()),
+                "severity must be a valid enum value, got: " + ts.severity());
+        assertTrue(VALID_TYPES.contains(ts.type()));
+        assertFalse(ts.descriptionHtml() == null || ts.descriptionHtml().isBlank(),
+                "descriptionHtml must be non-blank");
+
+        RuleMetadata js = catalog.lookup("javascript:S1186");
+        assertNotNull(js);
+        assertEquals(js.name(), ts.name(), "TS rule reuses the JS rule's name");
+        assertEquals(js.severity(), ts.severity());
+        assertEquals(js.type(), ts.type());
+        assertEquals(js.descriptionHtml(), ts.descriptionHtml());
+    }
+
+    @Test
     @DisplayName("lookup of an unknown rule key returns null")
     void lookup_unknownKey_returnsNull() {
         assertNull(catalog.lookup("java:DoesNotExist"));

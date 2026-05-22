@@ -1,5 +1,6 @@
 package dev.sonarcli.daemon;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,16 +52,37 @@ class SonarWayProfilesTest {
     }
 
     @Test
-    @DisplayName("TypeScript reuses the javascript repository's Sonar way rules")
-    void load_typescript_reusesJavascriptRules() {
+    @DisplayName("TypeScript reuses the JS Sonar way rule numbers under the typescript repository")
+    void load_typescript_reusesJsRulesUnderTypescriptRepo() {
         SonarWayProfiles profiles = load();
         List<String> tsKeys = profiles.ruleKeysFor(SonarLanguage.TS);
         assertFalse(tsKeys.isEmpty(),
-                "TypeScript must inherit the javascript Sonar way profile");
+                "TypeScript must inherit the JavaScript Sonar way rule numbers");
+        // The JS plugin's TypeScript sensor activates rules from the `typescript`
+        // rule repository (typescript:Sxxx). The JS analyzer ships no separate
+        // typescript Sonar way profile, so the JS profile's rule numbers are
+        // re-emitted under the typescript repo prefix. A javascript: prefix here
+        // means .ts files run against an empty rule set — a silent clean zero.
         for (String key : tsKeys) {
-            assertTrue(key.startsWith("javascript:"),
-                    "TS active rules use the javascript repo, got: " + key);
+            assertTrue(key.startsWith("typescript:"),
+                    "TS active rules must use the typescript repo, got: " + key);
         }
+    }
+
+    @Test
+    @DisplayName("the same rule numbers back the JS and TS Sonar way sets, differing only in repo prefix")
+    void load_typescript_sameRuleNumbersAsJavascript() {
+        SonarWayProfiles profiles = load();
+        List<String> jsBare = stripRepo(profiles.ruleKeysFor(SonarLanguage.JS));
+        List<String> tsBare = stripRepo(profiles.ruleKeysFor(SonarLanguage.TS));
+        assertEquals(jsBare, tsBare,
+                "TS Sonar way must carry exactly the JS rule numbers, only the repo prefix differs");
+        assertTrue(profiles.ruleKeysFor(SonarLanguage.TS).contains("typescript:S1186"),
+                "TS Sonar way must activate typescript:S1186");
+    }
+
+    private static List<String> stripRepo(List<String> keys) {
+        return keys.stream().map(k -> k.substring(k.indexOf(':') + 1)).toList();
     }
 
     @Test

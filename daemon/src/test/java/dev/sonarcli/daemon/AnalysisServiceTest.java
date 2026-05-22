@@ -113,6 +113,31 @@ class AnalysisServiceTest {
     }
 
     @Test
+    @DisplayName("TypeScript fixture raises a typescript: issue (was a silent clean zero)")
+    void analyze_typescript_raisesTsIssue() {
+        try (AnalysisService service = new AnalysisService()) {
+            AnalyzeResponse response = service.analyze(request("ts/bad.ts"));
+
+            // The JS plugin's TypeScript sensor activates the `typescript` rule
+            // repository. If the Sonar way active rules carry the `javascript:`
+            // prefix, the sensor finds none of them and every .ts file is a
+            // silent clean zero. A typescript: issue here proves the fix.
+            List<Issue> tsIssues = response.issues().stream()
+                    .filter(i -> i.ruleKey().startsWith("typescript:"))
+                    .toList();
+            assertFalse(tsIssues.isEmpty(),
+                    "expected at least one typescript: issue (path was a silent no-op), "
+                            + "got: " + response.issues() + " warnings: " + response.warnings());
+            for (Issue i : tsIssues) {
+                assertTrue(VALID_SEVERITIES.contains(i.severity()),
+                        "ts issue severity must be a valid value, got: " + i.severity());
+                assertTrue(VALID_TYPES.contains(i.type()),
+                        "ts issue type must be a valid value, got: " + i.type());
+            }
+        }
+    }
+
+    @Test
     @DisplayName("a mixed-language request analyzes every file in one pass")
     void analyze_mixedLanguageRequest() {
         try (AnalysisService service = new AnalysisService()) {
@@ -274,6 +299,92 @@ class AnalysisServiceTest {
                 assertTrue(VALID_TYPES.contains(i.type()),
                         "go issue type must be metadata-resolved, got: " + i.type());
             }
+        }
+    }
+
+    @Test
+    @DisplayName("a crashed JS sensor surfaces an AnalysisWarning instead of a silent zero")
+    void sensorFailureWarnings_crashedJsSensor_warns() {
+        // The SonarLint engine swallows a sensor crash: it logs
+        // "Error executing sensor: '<name>'" and leaves failedAnalysisFiles
+        // empty. A JS/TS/CSS file that hit such a crash must still surface a
+        // visible warning rather than be reported as a silent clean zero.
+        List<String> engineLog = List.of(
+                "Execute Sensor: JavaScript/TypeScript analysis",
+                "Error executing sensor: 'JavaScript/TypeScript analysis'",
+                "java.lang.IllegalStateException: Analysis of JS/TS files failed");
+
+        List<dev.sonarcli.protocol.dto.AnalysisWarning> warnings =
+                AnalysisService.sensorFailureWarnings(engineLog);
+
+        assertFalse(warnings.isEmpty(),
+                "a crashed JS sensor must emit a warning, got none");
+        assertTrue(warnings.stream().anyMatch(w ->
+                        w.message().toLowerCase().contains("javascript")
+                                && w.message().toLowerCase().contains("not analyzed")),
+                "the warning must name the analyzer and explain the files were "
+                        + "not analyzed, got: " + warnings);
+    }
+
+    @Test
+    @DisplayName("a crashed CSS sensor surfaces an AnalysisWarning")
+    void sensorFailureWarnings_crashedCssSensor_warns() {
+        List<String> engineLog = List.of(
+                "Execute Sensor: CSS Rules",
+                "Error executing sensor: 'CSS Rules'");
+
+        List<dev.sonarcli.protocol.dto.AnalysisWarning> warnings =
+                AnalysisService.sensorFailureWarnings(engineLog);
+
+        assertFalse(warnings.isEmpty(), "a crashed CSS sensor must emit a warning");
+        assertTrue(warnings.stream().anyMatch(w ->
+                        w.message().toLowerCase().contains("css")),
+                "the warning must name the CSS analyzer, got: " + warnings);
+    }
+
+    @Test
+    @DisplayName("a clean engine log produces no sensor-failure warnings")
+    void sensorFailureWarnings_noErrors_noWarnings() {
+        List<String> engineLog = List.of(
+                "Execute Sensor: JavaScript/TypeScript analysis",
+                "1/1 source file has been analyzed",
+                "Execute Sensor: HTML");
+
+        assertTrue(AnalysisService.sensorFailureWarnings(engineLog).isEmpty(),
+                "an engine log with no sensor errors must produce no warnings");
+    }
+
+    @Test
+    @DisplayName("a crash in a non-JS-family sensor is not turned into a JS warning")
+    void sensorFailureWarnings_nonJsSensor_ignored() {
+        // Only the out-of-process JS/TS/CSS sensors are swallowed silently;
+        // an in-process analyzer crash propagates as a real exception, so a
+        // 'JavaSensor' error line must NOT be converted into a warning here.
+        List<String> engineLog = List.of(
+                "Error executing sensor: 'JavaSensor'",
+                "Error executing sensor: 'Python Sensor'");
+
+        assertTrue(AnalysisService.sensorFailureWarnings(engineLog).isEmpty(),
+                "a non-JS-family sensor error must not produce a JS-family warning");
+    }
+
+    @Test
+    @DisplayName("a successful JS analysis produces issues and no spurious sensor-failure warning")
+    void analyze_javascript_successHasNoSensorFailureWarning() {
+        try (AnalysisService service = new AnalysisService()) {
+            AnalyzeResponse response = service.analyze(request("js/bad.js"));
+
+            // The JS analyzer ran fine, so a real javascript: issue is present
+            // and the sensor-failure path must stay silent — a healthy
+            // analysis must never emit the "analyzer failed" warning.
+            assertTrue(response.issues().stream()
+                            .anyMatch(i -> i.ruleKey().startsWith("javascript:")),
+                    "a healthy JS analysis must still raise a javascript: issue, "
+                            + "got: " + response.issues());
+            assertFalse(response.warnings().stream()
+                            .anyMatch(w -> w.message().contains("analyzer failed")),
+                    "a successful JS analysis must not emit a sensor-failure "
+                            + "warning, got: " + response.warnings());
         }
     }
 

@@ -1,7 +1,9 @@
 package dev.sonarcli.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -15,6 +17,7 @@ import dev.sonarcli.protocol.Json;
 import dev.sonarcli.protocol.dto.AnalysisWarning;
 import dev.sonarcli.protocol.dto.AnalyzeResponse;
 import dev.sonarcli.protocol.dto.Issue;
+import dev.sonarcli.protocol.dto.RuleMetadata;
 
 /**
  * Unit tests for the {@link Reporter} implementations: {@link TextReporter}
@@ -130,5 +133,34 @@ class ReportersTest {
         JsonNode root = Json.mapper().readTree(json);
         assertEquals(0, root.get("files").size(), "a clean response has no file groups");
         assertEquals(0, root.get("issueCount").asInt(), "a clean response has zero issues");
+    }
+
+    @Test
+    @DisplayName("JsonReporter rule block omits the heavy HTML description (token-lean)")
+    void jsonRuleBlockOmitsHtmlDescription() throws Exception {
+        String hugeHtml = "<p>" + "Z".repeat(4000) + "</p>";
+        RuleMetadata meta = new RuleMetadata(
+                "java:S1118", "Utility classes should not have public constructors",
+                "java", "MAJOR", "CODE_SMELL", hugeHtml, "Add a private constructor.");
+        RuleMetadataIndex index = new RuleMetadataIndex(List.of(meta));
+
+        String json = new JsonReporter().render(WITH_ISSUES, index, null);
+
+        assertFalse(json.contains("ZZZZZ"),
+                "compact JSON must not embed the multi-KB HTML rule description");
+
+        JsonNode root = Json.mapper().readTree(json);
+        JsonNode ruleBlock = null;
+        for (JsonNode file : root.get("files")) {
+            for (JsonNode issue : file.get("issues")) {
+                if ("java:S1118".equals(issue.get("ruleKey").asText())) {
+                    ruleBlock = issue.get("rule");
+                }
+            }
+        }
+        assertNotNull(ruleBlock, "the java:S1118 issue must carry a rule block");
+        assertNull(ruleBlock.get("description"),
+                "the compact JSON rule block must not carry an HTML 'description'");
+        assertNotNull(ruleBlock.get("name"), "the rule name stays in the compact JSON");
     }
 }

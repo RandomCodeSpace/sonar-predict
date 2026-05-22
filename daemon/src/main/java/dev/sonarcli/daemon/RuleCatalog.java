@@ -100,6 +100,7 @@ public final class RuleCatalog {
             throw new IllegalStateException(
                     "no analyzer plugin JARs in " + pluginsDir.toAbsolutePath());
         }
+        addTypeScriptAliases(rules);
         return new RuleCatalog(rules);
     }
 
@@ -126,6 +127,29 @@ public final class RuleCatalog {
             }
         } catch (IOException e) {
             throw new UncheckedIOException("could not read plugin JAR: " + jarPath, e);
+        }
+    }
+
+    /**
+     * Mirrors every {@code javascript:} rule as a {@code typescript:} rule.
+     *
+     * <p>The {@code sonar-javascript-plugin} ships rule metadata only under the
+     * {@code javascript} repository, but its TypeScript sensor emits
+     * {@code typescript:}-keyed issues with the same {@code S}-numbers. Without
+     * this mirror, {@code lookup}/{@code all} hold no metadata for
+     * {@code typescript:} keys, so TS issues get default severity/type and no
+     * description. A genuine {@code typescript:} rule from a JAR (should one
+     * ever ship) wins via {@code putIfAbsent}.
+     */
+    private static void addTypeScriptAliases(Map<String, RuleMetadata> rules) {
+        for (RuleMetadata js : java.util.List.copyOf(rules.values())) {
+            if (!js.ruleKey().startsWith("javascript:")) {
+                continue;
+            }
+            String tsKey = "typescript:" + js.ruleKey().substring("javascript:".length());
+            rules.putIfAbsent(tsKey, new RuleMetadata(
+                    tsKey, js.name(), "ts", js.severity(), js.type(),
+                    js.descriptionHtml(), js.howToFix()));
         }
     }
 

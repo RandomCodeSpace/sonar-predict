@@ -21,7 +21,10 @@ import dev.sonarcli.protocol.dto.RuleMetadata;
  * {@link Json#mapper()}. Issues are grouped by file under a {@code files}
  * array; field order is fixed, so the same response always renders identically.
  * When the {@link RuleMetadataIndex} carries metadata for a rule, the issue
- * gains a nested {@code rule} object (name, description, how-to-fix).
+ * gains a nested {@code rule} object (name and fix guidance). The rule's full
+ * HTML description is intentionally omitted from this format to keep it
+ * token-lean for agent context windows; it lives in the SARIF output and in
+ * {@code sonar rules show <ruleKey>}.
  *
  * <p>Shape:
  * <pre>{@code
@@ -106,10 +109,11 @@ public final class JsonReporter implements Reporter {
         node.put("endColumn", issue.endColumn());
         node.put("message", issue.message());
         if (metadata != null) {
+            // Token-lean by design: the rule name and fix guidance, but not the
+            // multi-KB HTML description (that is in SARIF and `rules show`).
             ObjectNode rule = node.putObject("rule");
             rule.put("name", metadata.name());
             rule.put("language", metadata.language());
-            rule.put("description", metadata.descriptionHtml());
             rule.put("howToFix", metadata.howToFix());
         }
         return node;
