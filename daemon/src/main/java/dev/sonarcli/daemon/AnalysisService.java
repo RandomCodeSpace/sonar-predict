@@ -78,6 +78,7 @@ public final class AnalysisService implements AutoCloseable {
     private final Set<SonarLanguage> loadedLanguages;
     private final RuleCatalog ruleCatalog;
     private final SonarWayProfiles sonarWayProfiles;
+    private final RuleParameterDefaults ruleParameterDefaults;
     private final AnalysisScheduler scheduler;
     private final Path workDir;
 
@@ -139,6 +140,11 @@ public final class AnalysisService implements AutoCloseable {
                 loadedPlugins.getAllPluginInstancesByKeys().keySet());
         this.ruleCatalog = RuleCatalog.fromPluginsDir(pluginsDir);
         this.sonarWayProfiles = SonarWayProfiles.load(pluginsDir);
+        // The per-rule parameter defaults each analyzer registers in its
+        // RulesDefinition. Activating a Sonar way rule with no parameters lets
+        // the engine fall back to a check's generic field default — wrong for
+        // some languages (most visibly go:S100 function naming). Harvested once.
+        this.ruleParameterDefaults = RuleParameterDefaults.extract(loadedPlugins);
         this.workDir = createWorkDir();
 
         AnalysisSchedulerConfiguration schedulerConfig = AnalysisSchedulerConfiguration.builder()
@@ -220,7 +226,8 @@ public final class AnalysisService implements AutoCloseable {
 
         List<ActiveRule> activeRules = request.profileRef() != null
                 ? profileRulesFrom(request.profileRef())
-                : resolveActiveRules(sonarWayProfiles, presentLanguages, warnings);
+                : resolveActiveRules(
+                        sonarWayProfiles, ruleParameterDefaults, presentLanguages, warnings);
 
         AnalysisConfiguration analysisConfig = AnalysisConfiguration.builder()
                 .setBaseDir(baseDir)
@@ -444,13 +451,21 @@ public final class AnalysisService implements AutoCloseable {
      * detected language's own key, so {@code .ts} files run the
      * {@code javascript} repository's rules under the {@code ts} language.
      *
-     * @param profiles the bundled Sonar way profiles
-     * @param languages the languages detected among the request's files
-     * @param warnings  collector for per-language "no rule set" warnings
+     * <p>Each rule also carries the parameter defaults its analyzer registers
+     * ({@link RuleParameterDefaults}). The {@code Sonar_way_profile.json}
+     * resource lists only rule keys, so without this the engine would fall back
+     * to a check's generic field default — wrong for some languages, most
+     * visibly {@code go:S100}'s camelCase function-name regex.
+     *
+     * @param profiles      the bundled Sonar way profiles
+     * @param paramDefaults the analyzer-registered rule parameter defaults
+     * @param languages     the languages detected among the request's files
+     * @param warnings      collector for per-language "no rule set" warnings
      * @return the active rules for the engine
      */
     static List<ActiveRule> resolveActiveRules(
             SonarWayProfiles profiles,
+            RuleParameterDefaults paramDefaults,
             Set<SonarLanguage> languages,
             List<AnalysisWarning> warnings) {
         List<ActiveRule> rules = new ArrayList<>();
@@ -465,7 +480,12 @@ public final class AnalysisService implements AutoCloseable {
             }
             String languageKey = language.getSonarLanguageKey();
             for (String ruleKey : ruleKeys) {
-                rules.add(new ActiveRule(ruleKey, languageKey));
+                ActiveRule activeRule = new ActiveRule(ruleKey, languageKey);
+                Map<String, String> params = paramDefaults.paramsFor(ruleKey);
+                if (!params.isEmpty()) {
+                    activeRule.setParams(params);
+                }
+                rules.add(activeRule);
             }
         }
         return rules;
@@ -551,7 +571,8 @@ public final class AnalysisService implements AutoCloseable {
 
     /**
      * Builds the active rules from an imported SonarQube quality profile.
-     * Each profile rule becomes an {@link ActiveRule} carrying its parameters;
+     * Each profile rule becomes an {@link ActiveRule} carrying the analyzer's
+     * registered parameter defaults overlaid with the profile's own parameters;
      * the rule's language is resolved from the {@link RuleCatalog}, falling
      * back to the repository-key prefix when the rule is not catalogued.
      *
@@ -569,9 +590,14 @@ public final class AnalysisService implements AutoCloseable {
                 // rather than fail the whole analysis.
                 continue;
             }
+            // The analyzer-registered parameter defaults are the baseline; the
+            // profile's own <parameters> override them where it sets a value.
             ActiveRule active = new ActiveRule(rule.ruleKey(), languageKey);
-            if (!rule.parameters().isEmpty()) {
-                active.setParams(Map.copyOf(rule.parameters()));
+            Map<String, String> params =
+                    new java.util.HashMap<>(ruleParameterDefaults.paramsFor(rule.ruleKey()));
+            params.putAll(rule.parameters());
+            if (!params.isEmpty()) {
+                active.setParams(Map.copyOf(params));
             }
             rules.add(active);
         }

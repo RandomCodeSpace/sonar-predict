@@ -261,7 +261,8 @@ class AnalysisServiceTest {
                 .restrictedToNone();
         List<dev.sonarcli.protocol.dto.AnalysisWarning> warnings = new java.util.ArrayList<>();
         AnalysisService.resolveActiveRules(
-                empty, Set.of(org.sonarsource.sonarlint.core.commons.api.SonarLanguage.GO), warnings);
+                empty, RuleParameterDefaults.empty(),
+                Set.of(org.sonarsource.sonarlint.core.commons.api.SonarLanguage.GO), warnings);
         assertFalse(warnings.isEmpty(),
                 "a detected language with zero rules must emit a warning");
         assertTrue(warnings.stream().anyMatch(w ->
@@ -275,7 +276,8 @@ class AnalysisServiceTest {
         SonarWayProfiles profiles = SonarWayProfiles.load(java.nio.file.Path.of("plugins"));
         List<dev.sonarcli.protocol.dto.AnalysisWarning> warnings = new java.util.ArrayList<>();
         var rules = AnalysisService.resolveActiveRules(
-                profiles, Set.of(org.sonarsource.sonarlint.core.commons.api.SonarLanguage.GO), warnings);
+                profiles, RuleParameterDefaults.empty(),
+                Set.of(org.sonarsource.sonarlint.core.commons.api.SonarLanguage.GO), warnings);
         assertTrue(warnings.isEmpty(),
                 "Go has a Sonar way profile, so no warning is expected, got: " + warnings);
         assertFalse(rules.isEmpty(), "Go must resolve to a non-empty active rule list");
@@ -299,6 +301,22 @@ class AnalysisServiceTest {
                 assertTrue(VALID_TYPES.contains(i.type()),
                         "go issue type must be metadata-resolved, got: " + i.type());
             }
+        }
+    }
+
+    @Test
+    @DisplayName("an exported PascalCase Go function does not trip go:S100 (was a false positive)")
+    void analyze_go_exportedFunction_noS100FalsePositive() {
+        try (AnalysisService service = new AnalysisService()) {
+            AnalyzeResponse response = service.analyze(request("go/idiomatic.go"));
+
+            // go:S100 (function naming) run with the bare camelCase default
+            // regex wrongly flagged every exported Go function — Go mandates
+            // PascalCase for exported identifiers. Carrying the analyzer's own
+            // Go `format` default into the active rule makes idiomatic Go clean.
+            assertTrue(response.issues().stream().noneMatch(i -> "go:S100".equals(i.ruleKey())),
+                    "exported PascalCase Go is idiomatic and must not raise go:S100, got: "
+                            + response.issues());
         }
     }
 
