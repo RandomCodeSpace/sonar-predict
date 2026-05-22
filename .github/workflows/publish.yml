@@ -88,6 +88,19 @@ jobs:
             -DnewVersion="${{ steps.version.outputs.version }}" \
             -DgenerateBackupPoms=false
 
+      - name: Build the source bundle (whole-repo git archive of HEAD)
+        # Built BEFORE the deploy: the release profile's build-helper plugin
+        # attaches this zip (from the repo root) to the Maven Central upload,
+        # so the whole-repo source ships on Central as well as on the
+        # GitHub Release.
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          git archive --format=zip \
+            --prefix="sonar-predict-${VERSION}/" \
+            -o "sonar-predict-${VERSION}-src.zip" HEAD
+          ls -la "sonar-predict-${VERSION}-src.zip"
+
       - name: Build, sign and deploy to Maven Central
         env:
           OSS_NEXUS_USER: ${{ secrets.OSS_NEXUS_USER }}
@@ -96,15 +109,6 @@ jobs:
         run: |
           set -euo pipefail
           mvn -B -ntp -Prelease deploy
-
-      - name: Build the source bundle (whole-repo git archive of HEAD)
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
-          git archive --format=zip \
-            --prefix="sonar-predict-${VERSION}/" \
-            -o "sonar-predict-${VERSION}-src.zip" HEAD
-          ls -la "sonar-predict-${VERSION}-src.zip"
 
       - name: Locate the skill bundle zip
         id: bundle

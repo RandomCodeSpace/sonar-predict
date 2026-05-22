@@ -196,6 +196,37 @@
                             <waitUntil>validated</waitUntil>
                         </configuration>
                     </plugin>
+
+                    <!--
+                      Attach the whole-repo source zip (a git archive of HEAD,
+                      produced by the publish workflow before `deploy`) to the
+                      parent coordinate. Every release therefore also ships
+                      io.github.randomcodespace.sonarpredict:sonar-predictor-parent:<version>:zip:src
+                      to Maven Central, GPG-signed like every other artifact.
+                      Because this lives in the `release` profile + the publish
+                      workflow, it happens on every release automatically.
+                    -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-source-zip</id>
+                                <phase>package</phase>
+                                <goals><goal>attach-artifact</goal></goals>
+                                <configuration>
+                                    <artifacts>
+                                        <artifact>
+                                            <file>${project.basedir}/sonar-predict-${project.version}-src.zip</file>
+                                            <type>zip</type>
+                                            <classifier>src</classifier>
+                                        </artifact>
+                                    </artifacts>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
