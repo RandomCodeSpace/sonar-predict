@@ -56,7 +56,7 @@ import picocli.CommandLine.Spec;
         footerHeading = "%nExamples:%n",
         footer = {
                 "  Check the current git changeset (primary agent path):",
-                "    sonar check --diff --format json",
+                "    sonar --format json check --diff",
                 "  Check explicit files:",
                 "    sonar check src/Main.java src/Util.java",
                 "  Analyze a whole project directory:",
@@ -254,7 +254,7 @@ public final class SonarCommand implements Runnable {
                     "quality-profile XML). See `sonar --help` for those."},
             footerHeading = "%nExamples:%n",
             footer = {
-                    "  sonar check --diff --format json",
+                    "  sonar --format json check --diff",
                     "  sonar check src/Main.java src/Util.java",
                     "  sonar --config profile.xml check --diff",
                     "  sonar check --diff --coverage jacoco.xml --coverage-min 80"})

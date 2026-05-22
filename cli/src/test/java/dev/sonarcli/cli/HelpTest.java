@@ -1,6 +1,7 @@
 package dev.sonarcli.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.PrintWriter;
@@ -111,12 +112,28 @@ class HelpTest {
     }
 
     @Test
-    @DisplayName("--help carries at least one usage example")
+    @DisplayName("--help shows a usage example with --format before the subcommand")
     void rootHelpCarriesUsageExample() {
         String help = run("--help").out();
 
-        assertTrue(help.contains("sonar check --diff --format json"),
-                "--help must show the primary agent usage example, got:\n" + help);
+        assertTrue(help.contains("sonar --format json check --diff"),
+                "--help must show the primary usage example with the global --format "
+                        + "option before the subcommand, got:\n" + help);
+        assertFalse(help.contains("sonar check --diff --format json"),
+                "--help must not place the global --format option after the subcommand "
+                        + "— the CLI rejects that placement, got:\n" + help);
+    }
+
+    @Test
+    @DisplayName("check --help shows --format before the subcommand, not after")
+    void checkHelpUsesCorrectGlobalOptionPlacement() {
+        String help = run("check", "--help").out();
+
+        assertTrue(help.contains("sonar --format json check"),
+                "check --help must place the global --format option before the "
+                        + "subcommand, got:\n" + help);
+        assertFalse(help.contains("check --diff --format json"),
+                "check --help must not place --format after the subcommand, got:\n" + help);
     }
 
     @Test
