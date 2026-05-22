@@ -210,6 +210,13 @@
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>build-helper-maven-plugin</artifactId>
                         <version>3.6.0</version>
+                        <!-- Parent-only: a parent <build><plugins> entry is
+                             inherited by every child module, but the src zip
+                             lives at the repo root (= the parent basedir).
+                             Without this, children would try to attach a
+                             non-existent <module>/sonar-predict-*-src.zip and
+                             gpg:sign would fail on the ghost file. -->
+                        <inherited>false</inherited>
                         <executions>
                             <execution>
                                 <id>attach-source-zip</id>
