@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>skill-zip</id>
+
+    <!--
+      The same bundle tree as skill.xml, packaged as a single .zip for
+      non-skill use (manual install, transfer to an air-gapped host).
+      Produced at target/sonar-predictor-<version>.zip.
+    -->
+    <formats>
+        <format>zip</format>
+    </formats>
+
+    <baseDirectory>sonar-predictor</baseDirectory>
+    <includeBaseDirectory>true</includeBaseDirectory>
+
+    <fileSets>
+        <fileSet>
+            <directory>${project.basedir}/src/main/skill</directory>
+            <outputDirectory>.</outputDirectory>
+            <includes>
+                <include>SKILL.md</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/scripts</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>sonar</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/scripts</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>sonar.bat</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.build.directory}/plugins</directory>
+            <outputDirectory>plugins</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+
+    <dependencySets>
+        <dependencySet>
+            <outputDirectory>lib</outputDirectory>
+            <useProjectArtifact>false</useProjectArtifact>
+            <useTransitiveDependencies>false</useTransitiveDependencies>
+            <outputFileNameMapping>${artifact.artifactId}.jar</outputFileNameMapping>
+            <includes>
+                <include>io.github.randomcodespace.sonarpredict:sonar-predictor-cli</include>
+                <include>io.github.randomcodespace.sonarpredict:sonar-predictor-daemon</include>
+            </includes>
+        </dependencySet>
+    </dependencySets>
+</assembly>

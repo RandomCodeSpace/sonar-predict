@@ -36,10 +36,38 @@ import picocli.CommandLine.Spec;
         name = "sonar",
         mixinStandardHelpOptions = true,
         version = "sonar " + SonarCommand.VERSION,
-        description = "Run the sonar analysis quality gate.",
+        description = {
+                "Run the sonar analysis quality gate.",
+                "",
+                "An offline pre-push quality gate that runs the genuine SonarSource",
+                "analyzers locally (no network, no SonarQube server) and reports bugs,",
+                "code smells, vulnerabilities and security hotspots.",
+                "",
+                "Global options (--format, --severity, --config) go before the command,",
+                "e.g. `sonar --format json check ...`. Run `sonar <command> --help` for a",
+                "command's own options."},
         exitCodeOnInvalidInput = SonarCommand.EXIT_TOOL_ERROR,
         exitCodeOnExecutionException = SonarCommand.EXIT_TOOL_ERROR,
+        exitCodeListHeading = "%nExit codes:%n",
+        exitCodeList = {
+                "0:clean — no issues at or above the severity floor",
+                "1:issues found / coverage below threshold",
+                "2:tool error — bad input, daemon unreachable, no Java 17+"},
+        footerHeading = "%nExamples:%n",
+        footer = {
+                "  Check the current git changeset (primary agent path):",
+                "    sonar check --diff --format json",
+                "  Check explicit files:",
+                "    sonar check src/Main.java src/Util.java",
+                "  Analyze a whole project directory:",
+                "    sonar analyze ./src",
+                "  Drive rule selection from a SonarQube quality profile:",
+                "    sonar --config profile.xml check --diff",
+                "  Check with a coverage report and a minimum threshold:",
+                "    sonar check --diff --coverage target/site/jacoco/jacoco.xml"
+                        + " --coverage-min 80"},
         subcommands = {
+                CommandLine.HelpCommand.class,
                 SonarCommand.VersionCommand.class,
                 SonarCommand.CheckCommand.class,
                 SonarCommand.AnalyzeCommand.class,
@@ -204,7 +232,8 @@ public final class SonarCommand implements Runnable {
     }
 
     /** {@code sonar version} — print the CLI version. */
-    @Command(name = "version", description = "Print the sonar CLI version.")
+    @Command(name = "version", mixinStandardHelpOptions = true,
+            description = "Print the sonar CLI version.")
     static final class VersionCommand implements Runnable {
         @CommandLine.ParentCommand
         private SonarCommand parent;
@@ -216,8 +245,19 @@ public final class SonarCommand implements Runnable {
     }
 
     /** {@code sonar check} — analyze explicit files, or files changed in git. */
-    @Command(name = "check",
-            description = "Analyze specific files (or files changed in git via --diff).")
+    @Command(name = "check", mixinStandardHelpOptions = true,
+            description = {
+                    "Analyze specific files (or files changed in git via --diff).",
+                    "",
+                    "Global options precede the command: --format (sarif|json|text),",
+                    "--severity (minimum severity floor) and --config (a SonarQube",
+                    "quality-profile XML). See `sonar --help` for those."},
+            footerHeading = "%nExamples:%n",
+            footer = {
+                    "  sonar check --diff --format json",
+                    "  sonar check src/Main.java src/Util.java",
+                    "  sonar --config profile.xml check --diff",
+                    "  sonar check --diff --coverage jacoco.xml --coverage-min 80"})
     static final class CheckCommand implements java.util.concurrent.Callable<Integer> {
         @CommandLine.ParentCommand
         private SonarCommand parent;
@@ -254,8 +294,13 @@ public final class SonarCommand implements Runnable {
     }
 
     /** {@code sonar analyze} — walk a project directory and analyze its sources. */
-    @Command(name = "analyze",
-            description = "Walk a project directory and analyze every source file.")
+    @Command(name = "analyze", mixinStandardHelpOptions = true,
+            description = "Walk a project directory and analyze every source file.",
+            footerHeading = "%nExamples:%n",
+            footer = {
+                    "  sonar analyze ./src",
+                    "  sonar --format json analyze .",
+                    "  sonar analyze . --coverage jacoco.xml --coverage-min 80"})
     static final class AnalyzeCommand implements java.util.concurrent.Callable<Integer> {
         @CommandLine.ParentCommand
         private SonarCommand parent;
@@ -281,7 +326,8 @@ public final class SonarCommand implements Runnable {
     }
 
     /** {@code sonar rules} — inspect the analyzer rule catalog. */
-    @Command(name = "rules", description = "Inspect the analyzer rule catalog.",
+    @Command(name = "rules", mixinStandardHelpOptions = true,
+            description = "Inspect the analyzer rule catalog.",
             subcommands = {
                     RulesCommand.ListCommand.class,
                     RulesCommand.ShowCommand.class
@@ -296,7 +342,8 @@ public final class SonarCommand implements Runnable {
         }
 
         /** {@code sonar rules list} — list every known rule key and name. */
-        @Command(name = "list", description = "List every known rule key and name.")
+        @Command(name = "list", mixinStandardHelpOptions = true,
+                description = "List every known rule key and name.")
         static final class ListCommand implements java.util.concurrent.Callable<Integer> {
             @CommandLine.ParentCommand
             private RulesCommand rules;
@@ -321,7 +368,8 @@ public final class SonarCommand implements Runnable {
         }
 
         /** {@code sonar rules show <ruleKey>} — print one rule's full metadata. */
-        @Command(name = "show", description = "Print the full metadata for one rule.")
+        @Command(name = "show", mixinStandardHelpOptions = true,
+                description = "Print the full metadata for one rule.")
         static final class ShowCommand implements java.util.concurrent.Callable<Integer> {
             @CommandLine.ParentCommand
             private RulesCommand rules;
@@ -374,7 +422,7 @@ public final class SonarCommand implements Runnable {
      * silently clobbers a foreign pre-push hook: an existing hook that this
      * command did not write is backed up first.
      */
-    @Command(name = "install-hook",
+    @Command(name = "install-hook", mixinStandardHelpOptions = true,
             description = "Install a git pre-push hook that runs sonar check --diff.")
     static final class InstallHookCommand implements java.util.concurrent.Callable<Integer> {
 
@@ -448,7 +496,8 @@ public final class SonarCommand implements Runnable {
     }
 
     /** {@code sonar daemon} — manage the analysis daemon process. */
-    @Command(name = "daemon", description = "Manage the analysis daemon.",
+    @Command(name = "daemon", mixinStandardHelpOptions = true,
+            description = "Manage the analysis daemon.",
             subcommands = {
                     DaemonCommand.StartCommand.class,
                     DaemonCommand.StopCommand.class,
@@ -463,7 +512,8 @@ public final class SonarCommand implements Runnable {
             parent.spec.commandLine().usage(parent.spec.commandLine().getOut());
         }
 
-        @Command(name = "start", description = "Start the analysis daemon.")
+        @Command(name = "start", mixinStandardHelpOptions = true,
+                description = "Start the analysis daemon.")
         static final class StartCommand implements Runnable {
             @CommandLine.ParentCommand
             private DaemonCommand daemon;
@@ -476,7 +526,8 @@ public final class SonarCommand implements Runnable {
             }
         }
 
-        @Command(name = "stop", description = "Stop the analysis daemon.")
+        @Command(name = "stop", mixinStandardHelpOptions = true,
+                description = "Stop the analysis daemon.")
         static final class StopCommand implements java.util.concurrent.Callable<Integer> {
             @CommandLine.ParentCommand
             private DaemonCommand daemon;
@@ -496,7 +547,8 @@ public final class SonarCommand implements Runnable {
             }
         }
 
-        @Command(name = "status", description = "Report whether the daemon is running.")
+        @Command(name = "status", mixinStandardHelpOptions = true,
+                description = "Report whether the daemon is running.")
         static final class StatusCommand implements Runnable {
             @CommandLine.ParentCommand
             private DaemonCommand daemon;

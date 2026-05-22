@@ -1,0 +1,140 @@
+name: Publish to Maven Central + GitHub Release
+
+# Cuts a release. Triggered by pushing a version tag (vX.Y.Z), or manually
+# from the Actions tab with an explicit version.
+#
+# On a run it:
+#   1. derives the release version from the tag (v0.1.0 -> 0.1.0) — Maven
+#      Central rejects -SNAPSHOT, so versions:set strips it,
+#   2. builds, tests, GPG-signs and deploys protocol/daemon/cli to Maven
+#      Central via the Sonatype Central Portal (the dist module sets
+#      maven.deploy.skip=true so it is built but never staged),
+#   3. creates a GitHub Release carrying two bundles: a whole-repo source
+#      zip (git archive of HEAD) and the assembled skill bundle zip.
+#
+# Required repo secrets:
+#   OSS_NEXUS_USER         - Sonatype Central Portal token username
+#   OSS_NEXUS_PASS         - Sonatype Central Portal token password
+#   MAVEN_GPG_PRIVATE_KEY  - ASCII-armored GPG private key for signing
+#   MAVEN_GPG_PASSPHRASE   - passphrase for that key (omit if the key has none)
+# GITHUB_TOKEN is provided automatically.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.1.0) — required for manual runs'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for git archive + release notes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17 + GPG
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          server-id: central
+          server-username: OSS_NEXUS_USER
+          server-password: OSS_NEXUS_PASS
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Set up Node.js (JS analyzer tests need a Node runtime)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Derive release version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            VERSION="${INPUT_VERSION}"
+          else
+            # github.ref_name is the tag, e.g. v0.1.0 -> 0.1.0
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "${VERSION}" ]; then
+            echo "::error::could not determine release version"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION}"
+
+      - name: Strip -SNAPSHOT / set release version
+        run: |
+          set -euo pipefail
+          mvn -B -ntp versions:set \
+            -DnewVersion="${{ steps.version.outputs.version }}" \
+            -DgenerateBackupPoms=false
+
+      - name: Build, sign and deploy to Maven Central
+        env:
+          OSS_NEXUS_USER: ${{ secrets.OSS_NEXUS_USER }}
+          OSS_NEXUS_PASS: ${{ secrets.OSS_NEXUS_PASS }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -Prelease deploy
+
+      - name: Build the source bundle (whole-repo git archive of HEAD)
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          git archive --format=zip \
+            --prefix="sonar-predict-${VERSION}/" \
+            -o "sonar-predict-${VERSION}-src.zip" HEAD
+          ls -la "sonar-predict-${VERSION}-src.zip"
+
+      - name: Locate the skill bundle zip
+        id: bundle
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          SKILL_ZIP="dist/target/sonar-predict-skill-${VERSION}.zip"
+          if [ ! -f "${SKILL_ZIP}" ]; then
+            echo "::error::skill bundle not found at ${SKILL_ZIP}"
+            ls -la dist/target || true
+            exit 1
+          fi
+          echo "skill_zip=${SKILL_ZIP}" >> "$GITHUB_OUTPUT"
+          echo "Skill bundle: ${SKILL_ZIP}"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          SRC_ZIP="sonar-predict-${VERSION}-src.zip"
+          SKILL_ZIP="${{ steps.bundle.outputs.skill_zip }}"
+          if [ -n "${GITHUB_REF_NAME:-}" ] && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v${VERSION}"
+          fi
+          gh release create "${TAG}" \
+            --title "sonar-predict ${VERSION}" \
+            --generate-notes \
+            "${SRC_ZIP}" \
+            "${SKILL_ZIP}"

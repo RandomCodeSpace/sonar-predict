@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.randomcodespace.sonarpredict</groupId>
+        <artifactId>sonar-predictor-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>sonar-predictor-dist</artifactId>
+    <name>sonar-predictor :: dist</name>
+
+    <!--
+      The distribution module. It produces no code of its own; it assembles
+      the self-contained agent skill bundle under target/skill/sonar-predictor/:
+
+        SKILL.md          - agent-facing skill definition
+        bin/sonar(.bat)   - launchers that auto-discover a Java 17+ runtime
+        lib/*.jar         - the cli + daemon shaded fat jars
+        plugins/*.jar     - the 10 SonarSource analyzer plugins
+
+      The analyzer plugins are fetched through Maven (maven-dependency-plugin),
+      so corporate mirrors / Nexus / proxy configured in settings.xml all apply
+      — there are no hardcoded download URLs.
+    -->
+
+    <dependencies>
+        <!-- The two fat jars copied into lib/. Depended upon so the reactor
+             builds them before this module assembles the bundle. -->
+        <dependency>
+            <groupId>io.github.randomcodespace.sonarpredict</groupId>
+            <artifactId>sonar-predictor-cli</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.randomcodespace.sonarpredict</groupId>
+            <artifactId>sonar-predictor-daemon</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <properties>
+        <!--
+          The dist module assembles the skill bundle; it is not a Maven
+          Central artifact. Skip deploy so the release build never stages
+          it to the Central Portal, and skip source/javadoc since it has
+          no Java sources of its own.
+        -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+    </properties>
+
+    <build>
+        <plugins>
+            <!-- Fetch the 10 analyzer plugin jars through Maven into
+                 target/plugins/. Resolution honours settings.xml mirrors. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-analyzer-plugins</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>copy</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/plugins</outputDirectory>
+                            <stripVersion>false</stripVersion>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.java</groupId>
+                                    <artifactId>sonar-java-plugin</artifactId>
+                                    <version>${sonar.plugin.java.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.python</groupId>
+                                    <artifactId>sonar-python-plugin</artifactId>
+                                    <version>${sonar.plugin.python.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.javascript</groupId>
+                                    <artifactId>sonar-javascript-plugin</artifactId>
+                                    <version>${sonar.plugin.javascript.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.php</groupId>
+                                    <artifactId>sonar-php-plugin</artifactId>
+                                    <version>${sonar.plugin.php.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.kotlin</groupId>
+                                    <artifactId>sonar-kotlin-plugin</artifactId>
+                                    <version>${sonar.plugin.kotlin.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.slang</groupId>
+                                    <artifactId>sonar-go-plugin</artifactId>
+                                    <version>${sonar.plugin.go.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.slang</groupId>
+                                    <artifactId>sonar-ruby-plugin</artifactId>
+                                    <version>${sonar.plugin.ruby.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.slang</groupId>
+                                    <artifactId>sonar-scala-plugin</artifactId>
+                                    <version>${sonar.plugin.scala.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.html</groupId>
+                                    <artifactId>sonar-html-plugin</artifactId>
+                                    <version>${sonar.plugin.html.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.xml</groupId>
+                                    <artifactId>sonar-xml-plugin</artifactId>
+                                    <version>${sonar.plugin.xml.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Assemble the skill bundle directory + a matching .zip. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.7.1</version>
+                <executions>
+                    <!-- Exploded skill bundle at target/skill/sonar-predictor/. -->
+                    <execution>
+                        <id>build-skill-dir</id>
+                        <phase>package</phase>
+                        <goals><goal>single</goal></goals>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <finalName>skill</finalName>
+                            <descriptors>
+                                <descriptor>src/assembly/skill.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                    <!-- Matching zip at a predictable path the publish
+                         workflow picks up:
+                         target/sonar-predict-skill-<version>.zip. -->
+                    <execution>
+                        <id>build-skill-zip</id>
+                        <phase>package</phase>
+                        <goals><goal>single</goal></goals>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <finalName>sonar-predict-skill-${project.version}</finalName>
+                            <descriptors>
+                                <descriptor>src/assembly/skill-zip.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

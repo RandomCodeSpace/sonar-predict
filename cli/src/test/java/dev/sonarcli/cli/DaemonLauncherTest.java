@@ -162,6 +162,69 @@ class DaemonLauncherTest {
                 "the command must run the daemon jar");
     }
 
+    @Test
+    @DisplayName("sonar.java.exe drives the java executable in the spawn command")
+    void javaExePropertyDrivesTheSpawnCommand(@TempDir Path dir) throws Exception {
+        Path bundledJava = Files.createFile(dir.resolve("bundled-java"));
+        Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
+        String previous = System.getProperty(DaemonLauncher.JAVA_EXE_PROPERTY);
+        System.setProperty(DaemonLauncher.JAVA_EXE_PROPERTY, bundledJava.toString());
+        try {
+            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+
+            assertEquals(bundledJava.toString(), command.get(0),
+                    "the spawn command must use the java named by sonar.java.exe, got: "
+                            + command);
+        } finally {
+            if (previous == null) {
+                System.clearProperty(DaemonLauncher.JAVA_EXE_PROPERTY);
+            } else {
+                System.setProperty(DaemonLauncher.JAVA_EXE_PROPERTY, previous);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("sonar.plugins.dir is forwarded to the daemon for the bundled layout")
+    void pluginsDirPropertyIsForwardedToTheSpawnCommand(@TempDir Path dir) throws Exception {
+        Path pluginsDir = Files.createDirectories(dir.resolve("plugins"));
+        Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
+        String previous = System.getProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY);
+        System.setProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY, pluginsDir.toString());
+        try {
+            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+
+            assertTrue(command.contains(
+                            "-D" + DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY + "="
+                                    + pluginsDir),
+                    "a bundled launch must forward -Dsonar.plugins.dir, got: " + command);
+        } finally {
+            if (previous == null) {
+                System.clearProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY);
+            } else {
+                System.setProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY, previous);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("sonar.daemon.jar is honored by resolveDaemonJar for the bundled layout")
+    void daemonJarPropertyHonoredForBundledLayout(@TempDir Path dir) throws Exception {
+        Path bundledJar = Files.createFile(dir.resolve("sonar-predictor-daemon.jar"));
+        String previous = System.getProperty(DaemonLauncher.DAEMON_JAR_PROPERTY);
+        System.setProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, bundledJar.toString());
+        try {
+            assertEquals(bundledJar, DaemonLauncher.resolveDaemonJar(),
+                    "the bundled sonar.daemon.jar path must be honored");
+        } finally {
+            if (previous == null) {
+                System.clearProperty(DaemonLauncher.DAEMON_JAR_PROPERTY);
+            } else {
+                System.setProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, previous);
+            }
+        }
+    }
+
     private static long readPid(SocketPaths paths) throws Exception {
         return Long.parseLong(Files.readString(paths.pidFile()).trim());
     }

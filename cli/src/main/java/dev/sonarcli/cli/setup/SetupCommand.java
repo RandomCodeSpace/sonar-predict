@@ -29,7 +29,7 @@ import picocli.CommandLine.Spec;
  * a {@code Function<RunnerInputs, SetupRunner>} factory is the seam tests use
  * to inject a runner wired to stubbed sources.
  */
-@Command(name = "setup",
+@Command(name = "setup", mixinStandardHelpOptions = true,
         description = "Provision the analyzer runtime into ~/.sonar (one-time).")
 public final class SetupCommand implements Callable<Integer> {
 

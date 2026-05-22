@@ -4,16 +4,50 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>dev.sonarcli</groupId>
+    <groupId>io.github.randomcodespace.sonarpredict</groupId>
     <artifactId>sonar-predictor-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>sonar-predictor</name>
+    <description>SonarSource-powered code analysis predictor: a daemon + CLI that
+        runs the SonarLint analysis engine locally and is distributed as a
+        self-contained Claude Code agent skill.</description>
+    <url>https://github.com/RandomCodeSpace/sonar-predict</url>
+    <inceptionYear>2026</inceptionYear>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>randomcodespace</id>
+            <name>Amit Kumar</name>
+            <url>https://github.com/RandomCodeSpace</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/RandomCodeSpace/sonar-predict.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/RandomCodeSpace/sonar-predict.git</developerConnection>
+        <url>https://github.com/RandomCodeSpace/sonar-predict</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <issueManagement>
+        <system>GitHub Issues</system>
+        <url>https://github.com/RandomCodeSpace/sonar-predict/issues</url>
+    </issueManagement>
 
     <modules>
         <module>protocol</module>
         <module>daemon</module>
         <module>cli</module>
+        <module>dist</module>
     </modules>
 
     <properties>
@@ -23,6 +57,23 @@
         <junit.version>5.10.2</junit.version>
         <sonarlint.engine.version>10.24.0.81415</sonarlint.engine.version>
         <picocli.version>4.7.7</picocli.version>
+
+        <!--
+          The 10 SonarSource analyzer plugins — the runtime assets the daemon
+          loads. Single source of truth for the `dist` module, which fetches
+          them through Maven (so settings.xml mirrors / Nexus / proxy apply).
+          Versions match the engine generation 10.24.0.81415.
+        -->
+        <sonar.plugin.java.version>8.15.0.39343</sonar.plugin.java.version>
+        <sonar.plugin.python.version>5.5.0.23291</sonar.plugin.python.version>
+        <sonar.plugin.javascript.version>10.24.0.33043</sonar.plugin.javascript.version>
+        <sonar.plugin.php.version>3.46.0.13151</sonar.plugin.php.version>
+        <sonar.plugin.kotlin.version>3.2.0.7239</sonar.plugin.kotlin.version>
+        <sonar.plugin.go.version>1.18.1.827</sonar.plugin.go.version>
+        <sonar.plugin.ruby.version>1.19.0.471</sonar.plugin.ruby.version>
+        <sonar.plugin.scala.version>1.19.0.484</sonar.plugin.scala.version>
+        <sonar.plugin.html.version>3.19.0.5695</sonar.plugin.html.version>
+        <sonar.plugin.xml.version>2.13.0.5938</sonar.plugin.xml.version>
     </properties>
 
     <dependencyManagement>
@@ -68,4 +119,85 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!--
+          Maven Central publishing. Active only for the release build
+          (`mvn -Prelease deploy`), which runs in CI on a `v*` tag.
+          It attaches sources + javadoc jars, GPG-signs every artifact,
+          and uploads protocol/daemon/cli through the Sonatype Central
+          Portal. The `dist` module sets maven.deploy.skip=true, so it is
+          built but never staged for Central.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.10.1</version>
+                        <configuration>
+                            <!-- Produce the Central-required javadoc jar
+                                 without failing the release on doc-quality
+                                 lint (missing @return etc.). -->
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadoc</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.6.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>validated</waitUntil>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

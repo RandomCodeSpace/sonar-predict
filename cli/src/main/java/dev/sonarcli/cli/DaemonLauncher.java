@@ -47,8 +47,11 @@ import dev.sonarcli.protocol.SocketPaths;
  * property, falling back to the {@code daemon/} module root that holds the
  * resolved jar (its {@code daemon/plugins/} is the dev-default plugin set).
  *
- * <p><b>Java runtime.</b> The daemon always launches with the current/system
- * {@code java} that started the CLI — no JRE is provisioned or bundled.
+ * <p><b>Java runtime.</b> The daemon launches with the {@code java} named by
+ * {@code -Dsonar.java.exe} when set — the skill bundle's {@code bin/sonar}
+ * launcher sets it to a Java 17+ runtime it auto-discovered. With the property
+ * absent the daemon launches with the current/system {@code java} that started
+ * the CLI. No JRE is provisioned or bundled.
  */
 public final class DaemonLauncher {
 
@@ -57,6 +60,16 @@ public final class DaemonLauncher {
 
     /** System property naming the daemon working dir; overrides the dev default. */
     public static final String DAEMON_WORKDIR_PROPERTY = "sonar.daemon.workdir";
+
+    /**
+     * System property naming the {@code java} executable used to spawn the
+     * daemon. The skill bundle's {@code bin/sonar} launcher sets it to the
+     * Java 17+ runtime it auto-discovered, so the daemon launches on a
+     * verified-compatible JVM rather than whichever {@code java} happens to be
+     * on {@code PATH}. Absent, the launcher falls back to the current JVM's
+     * {@code java.home} (the dev default).
+     */
+    public static final String JAVA_EXE_PROPERTY = "sonar.java.exe";
 
     /**
      * The {@code sonar.plugins.dir} property the daemon reads to locate its
@@ -187,14 +200,18 @@ public final class DaemonLauncher {
     /**
      * Builds the JVM command line that launches the daemon.
      *
-     * <p>The daemon always launches with the current/system {@code java} — the
-     * same JVM that started the CLI. No JRE is provisioned or bundled.
+     * <p><b>Java runtime.</b> When {@code -Dsonar.java.exe} is set — the skill
+     * bundle's {@code bin/sonar} launcher sets it to the Java 17+ runtime it
+     * auto-discovered — the daemon spawns with that executable. Absent, the
+     * daemon launches with the current JVM's {@code java} (the dev default).
      *
-     * <p><b>Plugins directory resolution.</b> When a verified provisioned
-     * {@code ~/.sonar/<version>/} runtime exists (created by
-     * {@code sonar setup}), the daemon is given {@code -Dsonar.plugins.dir}
-     * pointed at its plugins directory. Otherwise the dev default applies: the
-     * daemon resolves its {@code plugins/} directory relative to its working
+     * <p><b>Plugins directory resolution.</b> The daemon is told where its
+     * analyzer plugins live via {@code -Dsonar.plugins.dir}. The directory is
+     * taken, in order, from: an explicit {@code -Dsonar.plugins.dir} on the
+     * CLI (the skill bundle's launcher sets this to {@code <bundle>/plugins});
+     * else a verified provisioned {@code ~/.sonar/<version>/} runtime created
+     * by {@code sonar setup}. With neither, the dev default applies: the
+     * daemon resolves a {@code plugins/} directory relative to its working
      * directory.
      *
      * @param jar         the daemon fat jar to run
@@ -204,13 +221,36 @@ public final class DaemonLauncher {
     static List<String> buildSpawnCommand(Path jar, RuntimeLayout provisioned) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
-        if (provisioned != null) {
-            command.add("-D" + DAEMON_PLUGINS_DIR_PROPERTY + "="
-                    + provisioned.pluginsDir().toAbsolutePath());
+        String pluginsDir = resolvePluginsDir(provisioned);
+        if (pluginsDir != null) {
+            command.add("-D" + DAEMON_PLUGINS_DIR_PROPERTY + "=" + pluginsDir);
         }
         command.add("-jar");
         command.add(jar.toString());
         return command;
+    }
+
+    /**
+     * Resolves the analyzer-plugin directory to hand the daemon, or
+     * {@code null} when the daemon should use its working-directory default.
+     *
+     * <p>An explicit {@code -Dsonar.plugins.dir} on the CLI wins — that is how
+     * the skill bundle's {@code bin/sonar} launcher points at {@code
+     * <bundle>/plugins}. Otherwise a verified provisioned runtime's plugins
+     * directory is used.
+     *
+     * @param provisioned a verified provisioned layout, or {@code null}
+     * @return the plugins directory path, or {@code null} for the dev default
+     */
+    private static String resolvePluginsDir(RuntimeLayout provisioned) {
+        String explicit = System.getProperty(DAEMON_PLUGINS_DIR_PROPERTY);
+        if (explicit != null && !explicit.isBlank()) {
+            return explicit;
+        }
+        if (provisioned != null) {
+            return provisioned.pluginsDir().toAbsolutePath().toString();
+        }
+        return null;
     }
 
     /**
@@ -260,6 +300,10 @@ public final class DaemonLauncher {
     }
 
     private static String javaExecutable() {
+        String configured = System.getProperty(JAVA_EXE_PROPERTY);
+        if (configured != null && !configured.isBlank()) {
+            return configured;
+        }
         Path javaHome = Path.of(System.getProperty("java.home"));
         Path java = javaHome.resolve("bin").resolve("java");
         return Files.isExecutable(java) ? java.toString() : "java";

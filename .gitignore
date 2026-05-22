@@ -11,6 +11,7 @@ docs/superpowers/
 # maven-shade-plugin scratch file (regenerated each package run)
 dependency-reduced-pom.xml
 
-# Vendored analyzer plugin JARs (~160 MB) — fetched via daemon/plugins/fetch.sh,
-# verified against daemon/plugins/CHECKSUMS.txt. Not committed to keep the repo lean.
+# Analyzer plugin JARs (~160 MB) dropped here for dev runs of the daemon
+# module. Not committed to keep the repo lean. The distribution build (dist
+# module) fetches its own copies through Maven and does not use this directory.
 daemon/plugins/*.jar
