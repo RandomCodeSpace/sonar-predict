@@ -32,6 +32,91 @@
 
     <build>
         <plugins>
+            <!-- Fetch the 10 analyzer plugin jars into plugins/ before tests
+                 run. RuleCatalog / PluginRuntime / SonarWayProfiles load the
+                 analyzers from that directory; the jars are gitignored, so a
+                 clean checkout (CI) has none until this fetch populates them.
+                 Resolution goes through Maven, so settings.xml mirrors / Nexus
+                 / proxy all apply — no hardcoded download URLs. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-analyzer-plugins</id>
+                        <phase>process-test-resources</phase>
+                        <goals><goal>copy</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.basedir}/plugins</outputDirectory>
+                            <stripVersion>false</stripVersion>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.java</groupId>
+                                    <artifactId>sonar-java-plugin</artifactId>
+                                    <version>${sonar.plugin.java.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.python</groupId>
+                                    <artifactId>sonar-python-plugin</artifactId>
+                                    <version>${sonar.plugin.python.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.javascript</groupId>
+                                    <artifactId>sonar-javascript-plugin</artifactId>
+                                    <version>${sonar.plugin.javascript.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.php</groupId>
+                                    <artifactId>sonar-php-plugin</artifactId>
+                                    <version>${sonar.plugin.php.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.kotlin</groupId>
+                                    <artifactId>sonar-kotlin-plugin</artifactId>
+                                    <version>${sonar.plugin.kotlin.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.slang</groupId>
+                                    <artifactId>sonar-go-plugin</artifactId>
+                                    <version>${sonar.plugin.go.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.slang</groupId>
+                                    <artifactId>sonar-ruby-plugin</artifactId>
+                                    <version>${sonar.plugin.ruby.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.slang</groupId>
+                                    <artifactId>sonar-scala-plugin</artifactId>
+                                    <version>${sonar.plugin.scala.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.html</groupId>
+                                    <artifactId>sonar-html-plugin</artifactId>
+                                    <version>${sonar.plugin.html.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.sonarsource.xml</groupId>
+                                    <artifactId>sonar-xml-plugin</artifactId>
+                                    <version>${sonar.plugin.xml.version}</version>
+                                    <type>jar</type>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Build a runnable fat jar: DaemonMain on a single classpath
                  entry, so the CLI can launch the daemon with `java -jar`. -->
             <plugin>
