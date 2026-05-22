@@ -1,0 +1,20 @@
+{
+  "name": "sonar-predictor",
+  "version": "0.1.1",
+  "description": "Offline SonarSource quality gate — runs the genuine SonarSource analyzers locally (no network, no server) to catch bugs, code smells, vulnerabilities and security hotspots. Bundles the sonar-predictor scanner skill and the sonar-scanner parallel-scan subagent (with a GPT-5-mini Copilot variant).",
+  "author": {
+    "name": "Amit Kumar",
+    "url": "https://github.com/RandomCodeSpace"
+  },
+  "homepage": "https://github.com/RandomCodeSpace/sonar-predict",
+  "repository": "https://github.com/RandomCodeSpace/sonar-predict",
+  "license": "Apache-2.0",
+  "keywords": [
+    "code-quality",
+    "static-analysis",
+    "sonarsource",
+    "linter",
+    "quality-gate",
+    "offline"
+  ]
+}

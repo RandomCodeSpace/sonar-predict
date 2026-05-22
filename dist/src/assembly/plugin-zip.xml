@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>plugin-zip</id>
+
+    <!--
+      The same plugin bundle tree as plugin.xml, packaged as a single .zip
+      for non-marketplace distribution (manual install, transfer to an
+      air-gapped host). Produced at target/sonar-predict-plugin-<version>.zip.
+    -->
+    <formats>
+        <format>zip</format>
+    </formats>
+
+    <baseDirectory>sonar-predictor</baseDirectory>
+    <includeBaseDirectory>true</includeBaseDirectory>
+
+    <fileSets>
+        <fileSet>
+            <directory>${project.basedir}/src/main/plugin/.claude-plugin</directory>
+            <outputDirectory>.claude-plugin</outputDirectory>
+            <includes>
+                <include>plugin.json</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/../.claude/agents</directory>
+            <outputDirectory>agents</outputDirectory>
+            <includes>
+                <include>sonar-scanner.md</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/plugin/agents</directory>
+            <outputDirectory>agents</outputDirectory>
+            <includes>
+                <include>sonar-scanner-copilot.md</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/skill</directory>
+            <outputDirectory>skills/sonar-predictor</outputDirectory>
+            <includes>
+                <include>SKILL.md</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/scripts</directory>
+            <outputDirectory>skills/sonar-predictor/bin</outputDirectory>
+            <includes>
+                <include>sonar</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/scripts</directory>
+            <outputDirectory>skills/sonar-predictor/bin</outputDirectory>
+            <includes>
+                <include>sonar.bat</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.build.directory}/plugins</directory>
+            <outputDirectory>skills/sonar-predictor/plugins</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+
+    <dependencySets>
+        <dependencySet>
+            <outputDirectory>skills/sonar-predictor/lib</outputDirectory>
+            <useProjectArtifact>false</useProjectArtifact>
+            <useTransitiveDependencies>false</useTransitiveDependencies>
+            <outputFileNameMapping>${artifact.artifactId}.jar</outputFileNameMapping>
+            <includes>
+                <include>io.github.randomcodespace.sonarpredict:sonar-predictor-cli</include>
+                <include>io.github.randomcodespace.sonarpredict:sonar-predictor-daemon</include>
+            </includes>
+        </dependencySet>
+    </dependencySets>
+</assembly>

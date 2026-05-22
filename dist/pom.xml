@@ -171,6 +171,37 @@
                             </descriptors>
                         </configuration>
                     </execution>
+                    <!-- Exploded plugin bundle at target/plugin/sonar-predictor/.
+                         The .claude-plugin/plugin.json format is shared by
+                         Claude Code and GitHub Copilot CLI, so one bundle
+                         installs in both. Layout: .claude-plugin/, agents/,
+                         skills/sonar-predictor/. -->
+                    <execution>
+                        <id>build-plugin-dir</id>
+                        <phase>package</phase>
+                        <goals><goal>single</goal></goals>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <finalName>plugin</finalName>
+                            <descriptors>
+                                <descriptor>src/assembly/plugin.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                    <!-- Matching plugin zip:
+                         target/sonar-predict-plugin-<version>.zip. -->
+                    <execution>
+                        <id>build-plugin-zip</id>
+                        <phase>package</phase>
+                        <goals><goal>single</goal></goals>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <finalName>sonar-predict-plugin-${project.version}</finalName>
+                            <descriptors>
+                                <descriptor>src/assembly/plugin-zip.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
         </plugins>
