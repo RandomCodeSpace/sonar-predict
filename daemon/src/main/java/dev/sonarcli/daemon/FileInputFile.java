@@ -24,6 +24,7 @@ public final class FileInputFile implements ClientInputFile {
     private final Path absolutePath;
     private final String relativePath;
     private final SonarLanguage language;
+    private final boolean isTest;
 
     /**
      * @param file     the source file (need not be absolute)
@@ -31,11 +32,23 @@ public final class FileInputFile implements ClientInputFile {
      * @param language the analyzer language for this file
      */
     public FileInputFile(Path file, Path baseDir, SonarLanguage language) {
+        this(file, baseDir, language, false);
+    }
+
+    /**
+     * @param file     the source file (need not be absolute)
+     * @param baseDir  directory the file's relative path is computed against
+     * @param language the analyzer language for this file
+     * @param isTest   {@code true} to mark this file as test scope; the
+     *                 analysis engine then skips MAIN-only rules on it
+     */
+    public FileInputFile(Path file, Path baseDir, SonarLanguage language, boolean isTest) {
         this.absolutePath = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
         Path base = Objects.requireNonNull(baseDir, "baseDir").toAbsolutePath().normalize();
         // Path.relativize uses the OS separator; the engine expects '/'.
         this.relativePath = base.relativize(absolutePath).toString().replace('\\', '/');
         this.language = Objects.requireNonNull(language, "language");
+        this.isTest = isTest;
     }
 
     @Override
@@ -45,7 +58,7 @@ public final class FileInputFile implements ClientInputFile {
 
     @Override
     public boolean isTest() {
-        return false;
+        return isTest;
     }
 
     @Override
