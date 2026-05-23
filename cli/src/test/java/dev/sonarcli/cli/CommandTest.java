@@ -178,6 +178,67 @@ class CommandTest {
     }
 
     @Test
+    @DisplayName("--save writes the report to PATH and emits a compact summary on stdout")
+    void saveWritesReportAndPrintsSummary(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(
+                        issue("Bad.java", "java:S1118", "CRITICAL"),
+                        issue("Bad.java", "java:S100", "MAJOR")),
+                List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(1, run.exitCode(), "issues found must exit 1 regardless of --save");
+
+        // The JSON report goes to the file, not stdout.
+        assertTrue(Files.exists(target), "--save target file must be created");
+        String written = Files.readString(target);
+        assertTrue(written.contains("\"issueCount\":2"),
+                "saved JSON must hold the full report, got: " + written.substring(0, Math.min(200, written.length())));
+        assertTrue(written.contains("java:S1118"));
+
+        // Stdout carries the compact native summary instead of the JSON.
+        String stdout = run.out();
+        assertFalse(stdout.contains("\"issueCount\""),
+                "stdout must not contain raw JSON when --save is used, got: " + stdout);
+        assertTrue(stdout.contains("sonar-predictor: 2 issues written to"),
+                "stdout must announce the count and target, got: " + stdout);
+        assertTrue(stdout.contains("severity:") && stdout.contains("CRITICAL=1") && stdout.contains("MAJOR=1"),
+                "stdout must include the severity rollup, got: " + stdout);
+        assertTrue(stdout.contains("type:") && stdout.contains("CODE_SMELL=2"),
+                "stdout must include the type rollup, got: " + stdout);
+    }
+
+    @Test
+    @DisplayName("--save on a clean scan still writes the report and emits the summary, exit 0")
+    void saveCleanScanWritesEmptyReport(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Clean.java"), "class Clean {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        rpc.analyzeResult = new AnalyzeResponse(List.of(), List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(0, run.exitCode(), "no issues must exit 0 even with --save");
+        assertTrue(Files.exists(target), "--save target file must be created even when clean");
+        assertTrue(run.out().contains("sonar-predictor: 0 issues written to"),
+                "stdout must still announce the 0-issue result, got: " + run.out());
+        // Severity / type rollup lines are skipped when there are no issues —
+        // assert their absence so the summary stays compact.
+        assertFalse(run.out().contains("severity:"),
+                "no severity rollup when there are no issues, got: " + run.out());
+    }
+
+    @Test
     @DisplayName("--severity filters out issues below the minimum before the exit-code decision")
     void severityFilterChangesExitCode(@TempDir Path dir) throws Exception {
         Path file = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");

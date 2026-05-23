@@ -136,7 +136,10 @@ jobs:
         run: |
           START_TS=$(date +%s)
           for attempt in $(seq 1 18); do
-            RESP=$(curl -fsSL -u "$SONAR_TOKEN:" \
+            # --proto-redir =https refuses to follow a redirect onto an insecure
+            # http:// URL (githubactions:S6506). Belt-and-braces with SONAR_HOST_URL
+            # already being https://, but the rule wants the explicit constraint.
+            RESP=$(curl -fsSL --proto-redir =https -u "$SONAR_TOKEN:" \
               "${SONAR_HOST_URL}/api/project_analyses/search?project=${SONAR_PROJECT_KEY}&ps=1" || echo '{}')
             ANALYSIS_TS=$(echo "$RESP" | jq -r '.analyses[0].date // empty' || true)
             if [ -n "$ANALYSIS_TS" ]; then
