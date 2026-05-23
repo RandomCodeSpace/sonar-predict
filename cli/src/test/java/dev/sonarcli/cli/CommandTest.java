@@ -216,6 +216,54 @@ class CommandTest {
     }
 
     @Test
+    @DisplayName("--save summary rollups cover every severity + type preferred-order bucket")
+    void saveSummaryRollupsCoverAllBuckets(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        // One issue per severity bucket and per type bucket — exercises every
+        // branch of the rollup helper, including the per-bucket ordering and
+        // the type-vs-severity distinction.
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(
+                        new Issue("java:Sb", "Bad.java", 1, 0, 1, 5, "BLOCKER", "BUG", "m1"),
+                        new Issue("java:Sv", "Bad.java", 2, 0, 2, 5, "MINOR", "VULNERABILITY", "m2"),
+                        new Issue("java:Sh", "Bad.java", 3, 0, 3, 5, "INFO", "SECURITY_HOTSPOT", "m3"),
+                        new Issue("java:Sc", "Bad.java", 4, 0, 4, 5, "CRITICAL", "CODE_SMELL", "m4")),
+                List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(1, run.exitCode());
+        String stdout = run.out();
+
+        // Severity rollup — all four buckets we generated appear, in preferred
+        // order (BLOCKER before CRITICAL before MINOR before INFO).
+        int blocker = stdout.indexOf("BLOCKER=1");
+        int critical = stdout.indexOf("CRITICAL=1");
+        int minor = stdout.indexOf("MINOR=1");
+        int info = stdout.indexOf("INFO=1");
+        assertTrue(blocker >= 0 && critical >= 0 && minor >= 0 && info >= 0,
+                "every severity bucket must appear in the rollup, got: " + stdout);
+        assertTrue(blocker < critical && critical < minor && minor < info,
+                "severity rollup must preserve preferred order, got: " + stdout);
+
+        // Type rollup — BUG / CODE_SMELL / VULNERABILITY / SECURITY_HOTSPOT
+        // each contribute one issue.
+        assertTrue(stdout.contains("BUG=1") && stdout.contains("CODE_SMELL=1")
+                        && stdout.contains("VULNERABILITY=1") && stdout.contains("SECURITY_HOTSPOT=1"),
+                "every type bucket must appear in the rollup, got: " + stdout);
+
+        // And the saved file is the full JSON, not the summary.
+        String written = Files.readString(target);
+        assertTrue(written.contains("\"issueCount\":4"),
+                "saved JSON must hold the full report");
+    }
+
+    @Test
     @DisplayName("--save on a clean scan still writes the report and emits the summary, exit 0")
     void saveCleanScanWritesEmptyReport(@TempDir Path dir) throws Exception {
         Path source = Files.writeString(dir.resolve("Clean.java"), "class Clean {}");
