@@ -100,6 +100,15 @@ public final class SonarCommand implements Runnable {
             description = "A SonarQube quality-profile XML to drive rule selection.")
     private String configProfile;
 
+    @Option(names = "--test-path", paramLabel = "GLOB",
+            description = {
+                    "Treat files matching GLOB as test code (additive).",
+                    "Repeatable. Augments the built-in test-path detection",
+                    "(src/test/**, *Test.java, *_test.go, *.spec.ts, ...).",
+                    "Useful when the project's test layout is non-standard,",
+                    "e.g. --test-path 'src/integration/**'."})
+    private java.util.List<String> additionalTestPaths = new java.util.ArrayList<>();
+
     @Spec
     private CommandSpec spec;
 
@@ -148,7 +157,10 @@ public final class SonarCommand implements Runnable {
         AnalyzeRequest request = new AnalyzeRequest(
                 resolved.baseDir().toString(),
                 resolved.relativePaths(),
-                List.of(), resolveProfileRef(), List.of());
+                List.of(), resolveProfileRef(), List.of(),
+                additionalTestPaths != null
+                        ? List.copyOf(additionalTestPaths)
+                        : List.of());
         AnalyzeResponse response = rpc.analyze(request);
 
         List<Issue> filtered = response.issues().stream()

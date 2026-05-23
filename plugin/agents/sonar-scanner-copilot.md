@@ -37,6 +37,28 @@ something unusual; don't guess flag names.
 Exit codes: `0` clean, `1` issues found (a normal result, not a failure),
 `2` tool error.
 
+## Non-standard test layouts — `--test-path GLOB`
+
+The daemon auto-detects standard test paths per language (`src/test/**`,
+`tests/**`, `__tests__/**`, `spec/**`, plus per-language filename
+conventions like `*Test.java`, `*_test.go`, `test_*.py`, `*.spec.ts`,
+`*_spec.rb`). For those, no flag is needed — `Main`-only rules (`java:S100`,
+`java:S106`, `java:S1118`, …) already skip the test files correctly.
+
+**Look at the project layout before scanning.** If you see non-standard
+test directories or filename conventions — e.g. `src/integration/`, `e2e/`,
+`fixtures/`, `cypress/`, an `acceptance/` tree — pass them as repeatable
+`--test-path GLOB` *global* options so the analyzer skips `Main`-only rules
+on them too. Globs are standard Java NIO globs against `/`-separated paths.
+
+```sh
+# Augment the built-in detection for a project with cypress e2e + integration:
+./bin/sonar --test-path 'src/integration/**' --test-path 'cypress/**' agent-scan analyze .
+```
+
+Skip this flag when the layout is conventional. Don't over-classify: the
+goal is to not flag intentional test conventions, not to silence rules.
+
 ## What to report
 
 The stdout summary from `agent-scan` is your top-line: issue count, severity

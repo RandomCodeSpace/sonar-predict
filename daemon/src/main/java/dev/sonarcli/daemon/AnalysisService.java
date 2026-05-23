@@ -183,6 +183,31 @@ public final class AnalysisService implements AutoCloseable {
         }
     }
 
+    /**
+     * Glob-match a relative path against any of the patterns the caller passed
+     * via {@link AnalyzeRequest#additionalTestPaths()}. Uses Java's standard
+     * {@code glob:} {@link java.nio.file.PathMatcher} so callers can pass
+     * shapes like {@code src/integration/**} or {@code **&#47;legacy/*Test.java}.
+     */
+    private static boolean matchesAnyGlob(String relativePath, List<String> globs) {
+        if (globs == null || globs.isEmpty()) {
+            return false;
+        }
+        java.nio.file.Path p = java.nio.file.Path.of(relativePath);
+        for (String glob : globs) {
+            if (glob == null || glob.isEmpty()) continue;
+            try {
+                if (java.nio.file.FileSystems.getDefault()
+                        .getPathMatcher("glob:" + glob).matches(p)) {
+                    return true;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // A malformed glob from the caller shouldn't crash analysis.
+            }
+        }
+        return false;
+    }
+
     /** The analysis body; always runs holding {@link #analysisLock}. */
     private AnalyzeResponse analyzeLocked(AnalyzeRequest request) {
         Path baseDir = Path.of(request.baseDir()).toAbsolutePath().normalize();
@@ -220,7 +245,9 @@ public final class AnalysisService implements AutoCloseable {
                         "file path escapes the analysis base directory; skipped"));
                 continue;
             }
-            inputFiles.add(new FileInputFile(file, baseDir, language.get()));
+            boolean isTest = TestPathDetector.isTest(relative, language.get())
+                    || matchesAnyGlob(relative, request.additionalTestPaths());
+            inputFiles.add(new FileInputFile(file, baseDir, language.get(), isTest));
             presentLanguages.add(language.get());
         }
 
