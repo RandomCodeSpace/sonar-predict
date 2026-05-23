@@ -45,6 +45,20 @@ SOURCE_SELF = "self"
 SOURCE_CLOUD = "cloud"
 
 
+def load_self_coverage(path: str) -> float | None:
+    """Pull `.coverage.overallPercent` from the self-scan JSON, or None."""
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    cov = doc.get("coverage")
+    if not cov:
+        return None
+    pct = cov.get("overallPercent")
+    try:
+        return float(pct) if pct is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def load_self_scan(path: str) -> list[dict[str, Any]]:
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
@@ -72,6 +86,53 @@ def _normalize_path(p: str) -> str:
     if ":" in p:
         p = p.split(":", 1)[-1]
     return p
+
+
+def fetch_cloud_coverage(
+    host: str,
+    project_key: str,
+    organization: str,
+    token: str,
+    branch: str | None,
+    pull_request: str | None,
+) -> dict[str, float | None]:
+    """Pull headline coverage measures for the project (or PR scope) from SonarQube Cloud."""
+    auth = base64.b64encode(f"{token}:".encode()).decode()
+    headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+
+    params: dict[str, Any] = {
+        "component": project_key,
+        "organization": organization,
+        "metricKeys": "coverage,line_coverage,branch_coverage,new_coverage,new_line_coverage",
+    }
+    if pull_request:
+        params["pullRequest"] = pull_request
+    elif branch:
+        params["branch"] = branch
+    url = f"{host}/api/measures/component?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers=headers)
+    out: dict[str, float | None] = {}
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.load(resp)
+        for m in payload.get("component", {}).get("measures", []) or []:
+            metric = m.get("metric")
+            # On PR scope, the relevant value is in `period.value`; on branch/
+            # full scope, it's in `value`. We try both.
+            raw = m.get("value")
+            if raw is None and m.get("period"):
+                raw = m["period"].get("value")
+            try:
+                out[metric] = float(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                out[metric] = None
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            # Project may not exist on Cloud yet, or hasn't been analyzed
+            # in this PR scope; treat as no-data rather than crashing.
+            return out
+        raise
+    return out
 
 
 def fetch_cloud_issues(
@@ -132,7 +193,12 @@ def _key(issue: dict[str, Any]) -> tuple[str, str, int]:
     return (issue.get("ruleKey") or "", issue.get("file") or "", int(issue.get("line") or 0))
 
 
-def compare(self_issues: list[dict[str, Any]], cloud_issues: list[dict[str, Any]]) -> dict[str, Any]:
+def compare(
+    self_issues: list[dict[str, Any]],
+    cloud_issues: list[dict[str, Any]],
+    self_coverage: float | None,
+    cloud_coverage: dict[str, float | None],
+) -> dict[str, Any]:
     self_by_key = {_key(i): i for i in self_issues}
     cloud_by_key = {_key(i): i for i in cloud_issues}
 
@@ -142,6 +208,14 @@ def compare(self_issues: list[dict[str, Any]], cloud_issues: list[dict[str, Any]
     only_self = self_keys - cloud_keys
     only_cloud = cloud_keys - self_keys
 
+    overall_cloud = cloud_coverage.get("coverage")
+    line_cloud = cloud_coverage.get("line_coverage")
+    branch_cloud = cloud_coverage.get("branch_coverage")
+    new_cloud = cloud_coverage.get("new_coverage")
+    delta = None
+    if self_coverage is not None and line_cloud is not None:
+        delta = round(self_coverage - line_cloud, 2)
+
     return {
         "counts": {
             "self": len(self_issues),
@@ -149,6 +223,14 @@ def compare(self_issues: list[dict[str, Any]], cloud_issues: list[dict[str, Any]
             "common": len(both),
             "only_self": len(only_self),
             "only_cloud": len(only_cloud),
+        },
+        "coverage": {
+            "self_line_overall": self_coverage,
+            "cloud_line_overall": line_cloud,
+            "cloud_overall": overall_cloud,
+            "cloud_branch": branch_cloud,
+            "cloud_new_code": new_cloud,
+            "self_minus_cloud_line": delta,
         },
         "per_rule": _rule_breakdown(self_issues, cloud_issues),
         "only_self_samples": [self_by_key[k] for k in sorted(only_self)][:10],
@@ -171,8 +253,11 @@ def _rule_breakdown(self_issues: list[dict[str, Any]], cloud_issues: list[dict[s
 
 def render_markdown(report: dict[str, Any]) -> str:
     c = report["counts"]
+    cov = report["coverage"]
     lines = ["## Scan parity — self-scan ↔ SonarQube Cloud", ""]
     lines += [
+        "### Issues",
+        "",
         "| Metric | Value |",
         "| --- | --- |",
         f"| Self-scan total | {c['self']} |",
@@ -184,6 +269,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Parity score: "
         f"**{_parity_pct(c):.1f}%** "
         f"(common ÷ union)",
+        "",
+        "### Coverage",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| Self-scan line coverage | {_fmt_pct(cov['self_line_overall'])} |",
+        f"| SonarQube Cloud line coverage | {_fmt_pct(cov['cloud_line_overall'])} |",
+        f"| SonarQube Cloud overall coverage (line + branch) | {_fmt_pct(cov['cloud_overall'])} |",
+        f"| SonarQube Cloud branch coverage | {_fmt_pct(cov['cloud_branch'])} |",
+        f"| SonarQube Cloud new-code coverage (PR scope) | {_fmt_pct(cov['cloud_new_code'])} |",
+        f"| Self − Cloud line coverage | {_fmt_delta(cov['self_minus_cloud_line'])} |",
         "",
     ]
 
@@ -227,6 +323,17 @@ def _parity_pct(c: dict[str, int]) -> float:
     return 100.0 * c["common"] / union
 
 
+def _fmt_pct(v: float | None) -> str:
+    return f"{v:.2f}%" if v is not None else "_n/a_"
+
+
+def _fmt_delta(v: float | None) -> str:
+    if v is None:
+        return "_n/a_"
+    sign = "+" if v >= 0 else ""
+    return f"{sign}{v:.2f} pp"
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-scan", required=True)
@@ -244,6 +351,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     self_issues = load_self_scan(args.self_scan)
+    self_coverage = load_self_coverage(args.self_scan)
     cloud_issues = fetch_cloud_issues(
         args.host,
         args.project_key,
@@ -252,7 +360,15 @@ def main(argv: list[str]) -> int:
         args.branch,
         args.pull_request,
     )
-    report = compare(self_issues, cloud_issues)
+    cloud_coverage = fetch_cloud_coverage(
+        args.host,
+        args.project_key,
+        args.organization,
+        token,
+        args.branch,
+        args.pull_request,
+    )
+    report = compare(self_issues, cloud_issues, self_coverage, cloud_coverage)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
