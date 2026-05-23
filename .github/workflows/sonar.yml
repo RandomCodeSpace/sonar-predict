@@ -1,0 +1,142 @@
+name: Self-scan (sonar-predictor against itself)
+
+# Runs the project's OWN scanner — the in-repo daemon, freshly built from this
+# branch — against the repository on every PR and on pushes to main. The point
+# is CI parity with the local self-scan we run during development: every change
+# passes through the same gate, so the bar we apply to others applies to us.
+#
+# We deliberately do NOT use the previously released bundle from Maven Central.
+# SONAR_PREDICTOR_HOME is repointed at dist/target/skill/sonar-predictor so the
+# scan exercises the branch's analyzer code, not yesterday's release.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  self-scan:
+    name: Self-scan
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 keeps the full history available so we can switch to
+      # `--diff`-style semantics later without re-checking out the repo.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # JDK 17 is the project's build/runtime target. Temurin is the safe default.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The JS/TS analyzer plugin spawns Node at runtime to lint JS/TS sources,
+      # so Node must be on PATH when the scan runs (not just at build time).
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Cache the local Maven repo across runs. Keyed on every pom.xml in the
+      # tree so a dependency change invalidates cleanly; restore-keys lets a
+      # partial cache hit still seed most of ~/.m2.
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Build + test the whole reactor except `dist` (the bundle module is
+      # packaged separately below). `verify` runs the integration tests AND
+      # produces the JaCoCo XML reports we feed back into the scan as coverage
+      # evidence. failIfNoSpecifiedTests=false keeps modules with no tests
+      # from breaking the reactor.
+      - name: Build and test (generates JaCoCo XML reports)
+        run: mvn -B -ntp -pl '!dist' verify -Dsurefire.failIfNoSpecifiedTests=false
+
+      # Now build the skill bundle. -am pulls in upstream modules if they
+      # weren't already installed by the previous step. -DskipTests because
+      # the tests already ran — re-running them here just wastes minutes.
+      - name: Build dist (skill bundle this scan will use)
+        run: mvn -B -ntp -pl dist -am package -DskipTests
+
+      # The actual self-scan. We override SONAR_PREDICTOR_HOME so the wrapper
+      # script picks up THIS branch's freshly-built daemon jar and analyzer
+      # plugins, not whatever happens to be installed globally. Three JaCoCo
+      # XMLs are passed in as coverage evidence — one per Java module that
+      # produces coverage. agent-scan writes JSON to .sonar-predictor/scan.json
+      # and prints a human summary on stdout; we want both.
+      - name: Run self-scan
+        run: |
+          export SONAR_PREDICTOR_HOME="$(pwd)/dist/target/skill/sonar-predictor"
+          ./plugin/skills/sonar-predictor/bin/sonar agent-scan analyze . \
+            --coverage protocol/target/site/jacoco/jacoco.xml \
+            --coverage daemon/target/site/jacoco/jacoco.xml \
+            --coverage cli/target/site/jacoco/jacoco.xml
+
+      # Render headline counts into the GitHub job summary so reviewers see
+      # the scan result inline on the run page without downloading artifacts.
+      # `// ([.files[]?.issues[]?]|length)` is the fallback path when an older
+      # JSON shape doesn't carry a top-level issueCount.
+      - name: Render scan summary
+        if: always()
+        run: |
+          J=.sonar-predictor/scan.json
+          if [ ! -f "$J" ]; then
+            echo "## Sonar self-scan" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Scan JSON not produced — see the **Run self-scan** step log." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## Sonar self-scan"
+            echo
+            echo "| Metric | Value |"
+            echo "| --- | --- |"
+            echo "| Total issues | $(jq -r '.issueCount // ([.files[]?.issues[]?]|length)' "$J") |"
+            echo "| Coverage (line, overall) | $(jq -r '.coverage.overallPercent // "n/a"' "$J")% |"
+            echo "| Severity | $(jq -rc '[.files[]?.issues[]?.severity]|group_by(.)|map("\(.[0])=\(length)")|join(" ")' "$J") |"
+            echo "| Type | $(jq -rc '[.files[]?.issues[]?.type]|group_by(.)|map("\(.[0])=\(length)")|join(" ")' "$J") |"
+            echo "| Warnings | $(jq -r '.warnings // [] | length' "$J") |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Always upload the scan JSON, even on failure, so a broken scan is
+      # still debuggable from the run page. 14-day retention is enough to
+      # cover a typical PR review cycle without pinning storage forever.
+      - name: Upload scan JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonar-scan-${{ github.run_id }}
+          path: .sonar-predictor/scan.json
+          retention-days: 14
+
+      # Informational gate. We compute the count of CRITICAL bugs and security
+      # hotspots and emit a `::warning::` so they show on the PR's Checks tab,
+      # but we deliberately do NOT `exit 1` yet — first runs are baseline data
+      # while we work the existing findings down to zero.
+      #
+      # TODO: once the backlog is clear, flip this to `exit 1` on any
+      # CRITICAL bug or security hotspot and rename this step to "Quality gate".
+      - name: Quality gate (informational only)
+        if: always()
+        run: |
+          J=.sonar-predictor/scan.json
+          if [ ! -f "$J" ]; then
+            echo "No scan JSON found — skipping gate."
+            exit 0
+          fi
+          CRIT=$(jq -r '[.files[]?.issues[]? | select(.severity=="CRITICAL" and .type=="BUG")] | length' "$J")
+          HOT=$(jq -r '[.files[]?.issues[]? | select(.type=="SECURITY_HOTSPOT")] | length' "$J")
+          echo "Critical bugs: $CRIT"
+          echo "Security hotspots: $HOT"
+          if [ "$CRIT" -gt 0 ] || [ "$HOT" -gt 0 ]; then
+            echo "::warning::Self-scan found $CRIT critical bug(s) and $HOT security hotspot(s). Gate is informational for now; will enforce later."
+          fi
