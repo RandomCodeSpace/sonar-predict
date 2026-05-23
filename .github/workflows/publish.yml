@@ -9,8 +9,10 @@ name: Publish to Maven Central + GitHub Release
 #   2. builds, tests, GPG-signs and deploys protocol/daemon/cli to Maven
 #      Central via the Sonatype Central Portal (the dist module sets
 #      maven.deploy.skip=true so it is built but never staged),
-#   3. creates a GitHub Release carrying two bundles: a whole-repo source
-#      zip (git archive of HEAD) and the assembled skill bundle zip.
+#   3. creates a GitHub Release carrying three bundles: a whole-repo source
+#      zip (git archive of HEAD), the assembled skill bundle zip, and the
+#      assembled plugin bundle zip (the .claude-plugin format installable
+#      on Claude Code and GitHub Copilot CLI).
 #
 # Required repo secrets:
 #   OSS_NEXUS_USER         - Sonatype Central Portal token username
@@ -124,6 +126,20 @@ jobs:
           echo "skill_zip=${SKILL_ZIP}" >> "$GITHUB_OUTPUT"
           echo "Skill bundle: ${SKILL_ZIP}"
 
+      - name: Locate the plugin bundle zip
+        id: plugin
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          PLUGIN_ZIP="dist/target/sonar-predict-plugin-${VERSION}.zip"
+          if [ ! -f "${PLUGIN_ZIP}" ]; then
+            echo "::error::plugin bundle not found at ${PLUGIN_ZIP}"
+            ls -la dist/target || true
+            exit 1
+          fi
+          echo "plugin_zip=${PLUGIN_ZIP}" >> "$GITHUB_OUTPUT"
+          echo "Plugin bundle: ${PLUGIN_ZIP}"
+
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -132,6 +148,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           SRC_ZIP="sonar-predict-${VERSION}-src.zip"
           SKILL_ZIP="${{ steps.bundle.outputs.skill_zip }}"
+          PLUGIN_ZIP="${{ steps.plugin.outputs.plugin_zip }}"
           if [ -n "${GITHUB_REF_NAME:-}" ] && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
           else
@@ -141,4 +158,5 @@ jobs:
             --title "sonar-predict ${VERSION}" \
             --generate-notes \
             "${SRC_ZIP}" \
-            "${SKILL_ZIP}"
+            "${SKILL_ZIP}" \
+            "${PLUGIN_ZIP}"
