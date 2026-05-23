@@ -23,6 +23,13 @@ jobs:
   self-scan:
     name: Self-scan
     runs-on: ubuntu-latest
+    env:
+      # The dist-assembly step packages the ~150 MB skill bundle (CLI + daemon
+      # fat jars + 10 analyzer plugins). Maven's default heap is too small for
+      # that on ubuntu-latest — we'd get 'Execution exception: Java heap space'
+      # from maven-assembly-plugin:single. 2 GB is plenty and well under the
+      # runner's ~7 GB available memory.
+      MAVEN_OPTS: -Xmx2g
     steps:
       # fetch-depth: 0 keeps the full history available so we can switch to
       # `--diff`-style semantics later without re-checking out the repo.

@@ -264,6 +264,59 @@ class CommandTest {
     }
 
     @Test
+    @DisplayName("--save to an unwritable target exits 2 with a clear error")
+    void saveToUnwritableTargetExitsTwo(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        // Pass the temp directory itself as the --save path. Files.writeString
+        // refuses to write a regular file at a directory's path, which exercises
+        // the IOException catch + rethrow-as-IllegalStateException branch.
+        StubRpc rpc = rpc();
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(issue("Bad.java", "java:S1118", "MAJOR")), List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", dir.toString(),
+                "check", source.toString());
+
+        assertEquals(2, run.exitCode(),
+                "an unwritable --save target must exit 2 (tool error)");
+        assertTrue(run.err().toLowerCase().contains("could not write report"),
+                "stderr must explain the write failure, got: " + run.err());
+    }
+
+    @Test
+    @DisplayName("--save rollup appends unknown type-buckets in sorted order after the preferred ones")
+    void saveRollupHandlesUnknownTypeBuckets(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        // BLOCKER severity passes the severity floor. Both issues carry a
+        // 'type' that's outside the preferred-order list (BUG / CODE_SMELL /
+        // VULNERABILITY / SECURITY_HOTSPOT), forcing the rollup to fall
+        // through to its unknown-bucket sorting branch.
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(
+                        new Issue("custom:R1", "Bad.java", 1, 0, 1, 5, "BLOCKER", "WEIRDTYPE", "m1"),
+                        new Issue("custom:R2", "Bad.java", 2, 0, 2, 5, "BLOCKER", "OTHER", "m2")),
+                List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(1, run.exitCode());
+        String stdout = run.out();
+        int other = stdout.indexOf("OTHER=1");
+        int weird = stdout.indexOf("WEIRDTYPE=1");
+        assertTrue(other >= 0 && weird >= 0,
+                "unknown type buckets must appear in the rollup, got: " + stdout);
+        assertTrue(other < weird,
+                "unknown type buckets must be sorted alphabetically, got: " + stdout);
+    }
+
+    @Test
     @DisplayName("--save on a clean scan still writes the report and emits the summary, exit 0")
     void saveCleanScanWritesEmptyReport(@TempDir Path dir) throws Exception {
         Path source = Files.writeString(dir.resolve("Clean.java"), "class Clean {}");

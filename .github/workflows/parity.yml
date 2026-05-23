@@ -40,6 +40,10 @@ jobs:
     # Skip when the token isn't reachable (fork PRs) — the standalone
     # self-scan workflow still gates fork PRs on our daemon's findings.
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    env:
+      # Same dist-assembly heap concern as sonar.yml — 2 GB to keep the
+      # 150 MB skill-bundle zip step from OOMing maven-assembly-plugin.
+      MAVEN_OPTS: -Xmx2g
     steps:
       - name: Checkout
         uses: actions/checkout@v4
