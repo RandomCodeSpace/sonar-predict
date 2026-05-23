@@ -233,13 +233,15 @@ if [ -n "${JAVA_HOME:-}" ]; then
 fi
 
 # The `agent-scan` subcommand bakes the out-of-context discipline into the
-# tool: run the scan with JSON output redirected to .sonar-predictor/scan.json
-# at the project root, add that path to .gitignore on first use, and print a
-# compact summary on stdout. The calling agent reports the summary and the
-# file path; deeper drill-down happens with jq on the file, on demand.
+# tool: run the scan with JSON output written to .sonar-predictor/scan.json at
+# the project root, add that path to .gitignore on first use, and print a
+# compact summary on stdout.
+#
+# No external dependencies (no jq, no awk JSON-parsing): the CLI's --save flag
+# writes the report to the target file and emits the summary itself. The
+# wrapper here is just glue — argument defaults, .gitignore housekeeping.
 agent_scan() {
   local scan_file=".sonar-predictor/scan.json"
-  mkdir -p "$(dirname "$scan_file")"
 
   # Add the scan dir to .gitignore on first use, only inside a git repo.
   if git rev-parse --git-dir >/dev/null 2>&1; then
@@ -253,23 +255,10 @@ agent_scan() {
     set -- check --diff
   fi
 
-  local rc=0
-  set +e
-  "$REAL_SONAR" --format json "$@" > "$scan_file" 2>&1
-  rc=$?
-  set -e
-
-  if command -v jq >/dev/null 2>&1; then
-    local total sev
-    total="$(jq -r '(.issueCount // ([.files[]?.issues[]?] | length))' "$scan_file" 2>/dev/null)"
-    sev="$(jq -rc '[.files[]?.issues[]?.severity] | group_by(.) | map("\(.[0])=\(length)") | join(" ")' "$scan_file" 2>/dev/null)"
-    echo "sonar-predictor: ${total:-?} issues written to $scan_file"
-    [ -n "$sev" ] && echo "  severity: $sev"
-    echo "  query: jq '...' $scan_file"
-  else
-    echo "sonar-predictor: scan complete -> $scan_file (install jq for an inline summary)"
-  fi
-  return "$rc"
+  # CLI does the work: --save writes the JSON report to the target file and
+  # prints the compact "N issues written to <path> / severity ... / type ..."
+  # summary on stdout. Stderr from the analyzer flows through unfiltered.
+  "$REAL_SONAR" --format json --save "$scan_file" "$@"
 }
 
 if [ "${1:-}" = "agent-scan" ]; then
