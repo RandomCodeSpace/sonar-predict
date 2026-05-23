@@ -89,5 +89,36 @@ if not exist "%REAL_SONAR%" (
 )
 
 :exec
+if /i "%~1"=="agent-scan" (
+  shift /1
+  call :agent_scan %*
+  exit /b %ERRORLEVEL%
+)
 call "%REAL_SONAR%" %*
 exit /b %ERRORLEVEL%
+
+rem agent-scan: write JSON to .sonar-predictor\scan.json, gitignore that
+rem dir on first use, print a short pointer on stdout.
+:agent_scan
+set "SCAN_FILE=.sonar-predictor\scan.json"
+if not exist ".sonar-predictor" mkdir ".sonar-predictor"
+
+git rev-parse --git-dir >nul 2>&1
+if not errorlevel 1 (
+  if not exist .gitignore (
+    >>.gitignore echo .sonar-predictor/
+  ) else (
+    findstr /C:".sonar-predictor/" .gitignore >nul 2>&1 || >>.gitignore echo .sonar-predictor/
+  )
+)
+
+if "%~1"=="" (
+  call "%REAL_SONAR%" --format json check --diff > "%SCAN_FILE%" 2>&1
+) else (
+  call "%REAL_SONAR%" --format json %* > "%SCAN_FILE%" 2>&1
+)
+set RC=%ERRORLEVEL%
+
+echo sonar-predictor: scan complete -^> %SCAN_FILE%
+echo   query: jq ^"...^" %SCAN_FILE%
+exit /b %RC%

@@ -15,3 +15,6 @@ dependency-reduced-pom.xml
 # module. Not committed to keep the repo lean. The distribution build (dist
 # module) fetches its own copies through Maven and does not use this directory.
 daemon/plugins/*.jar
+
+# sonar-predictor scan output, written by `bin/sonar agent-scan`. Never commit.
+.sonar-predictor/
