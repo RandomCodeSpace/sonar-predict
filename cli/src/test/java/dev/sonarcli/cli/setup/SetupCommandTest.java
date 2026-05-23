@@ -98,11 +98,11 @@ class SetupCommandTest {
 
     @Test
     @DisplayName("sonar setup provisions plugins and engine then reports success")
-    void provisionsAndReportsSuccess(@TempDir Path base) {
-        StringWriter out = new StringWriter();
-        try {
+    void provisionsAndReportsSuccess(@TempDir Path base) throws Exception {
+        try (StringWriter out = new StringWriter();
+                PrintWriter writer = new PrintWriter(out)) {
             CommandLine cmd = setupCommandInto(base);
-            cmd.setOut(new PrintWriter(out));
+            cmd.setOut(writer);
             int code = cmd.execute("--repo", baseUrl());
 
             assertEquals(0, code, "a successful setup must exit 0");
@@ -119,10 +119,11 @@ class SetupCommandTest {
 
     @Test
     @DisplayName("--repo is threaded through to the PluginProvisioner")
-    void repoOptionIsThreaded(@TempDir Path base) {
-        try {
+    void repoOptionIsThreaded(@TempDir Path base) throws Exception {
+        try (StringWriter sink = new StringWriter();
+                PrintWriter writer = new PrintWriter(sink)) {
             CommandLine cmd = setupCommandInto(base);
-            cmd.setOut(new PrintWriter(new StringWriter()));
+            cmd.setOut(writer);
             cmd.execute("--repo", baseUrl());
 
             assertEquals(baseUrl(), seenRepoBase.get(),
@@ -153,10 +154,10 @@ class SetupCommandTest {
         // Stop the server: --offline must not touch the network.
         server.stop(0);
 
-        StringWriter out = new StringWriter();
-        try {
+        try (StringWriter out = new StringWriter();
+                PrintWriter writer = new PrintWriter(out)) {
             CommandLine cmd = setupCommandInto(base);
-            cmd.setOut(new PrintWriter(out));
+            cmd.setOut(writer);
             int code = cmd.execute("--offline", bundle.toString());
 
             assertEquals(0, code, "offline setup must exit 0");
@@ -172,7 +173,7 @@ class SetupCommandTest {
 
     @Test
     @DisplayName("a checksum failure exits 2 with a message naming the artifact")
-    void checksumFailureExitsTwo(@TempDir Path base) {
+    void checksumFailureExitsTwo(@TempDir Path base) throws Exception {
         // Tamper the java plugin's expected checksum.
         Manifest.Artifact java = manifest.plugins().get(0);
         Manifest tampered = new Manifest("10.24.0.81415", manifest.engine(),
@@ -181,11 +182,13 @@ class SetupCommandTest {
         Manifest original = manifest;
         manifest = tampered;
 
-        StringWriter err = new StringWriter();
-        try {
+        try (StringWriter err = new StringWriter();
+                StringWriter outSink = new StringWriter();
+                PrintWriter outWriter = new PrintWriter(outSink);
+                PrintWriter errWriter = new PrintWriter(err)) {
             CommandLine cmd = setupCommandInto(base);
-            cmd.setOut(new PrintWriter(new StringWriter()));
-            cmd.setErr(new PrintWriter(err));
+            cmd.setOut(outWriter);
+            cmd.setErr(errWriter);
             int code = cmd.execute("--repo", baseUrl());
 
             assertEquals(2, code, "a checksum failure must exit 2");

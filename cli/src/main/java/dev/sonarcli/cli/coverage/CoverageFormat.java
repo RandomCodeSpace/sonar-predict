@@ -55,6 +55,21 @@ public enum CoverageFormat {
         String head = readHead(path);
         String name = path.getFileName().toString();
 
+        CoverageFormat detected = detectXml(head);
+        if (detected == null) {
+            detected = detectTextual(head, name);
+        }
+        if (detected != null) {
+            return detected;
+        }
+
+        throw new CoverageException(
+                "unrecognized coverage report format: " + path
+                + " (expected JaCoCo, Cobertura, LCOV, Go profile, Clover, or SimpleCov)");
+    }
+
+    /** Identifies the XML-based formats (JaCoCo, Clover, Cobertura) from a head snippet. */
+    private static CoverageFormat detectXml(String head) {
         if (head.contains("<report") && head.contains("JACOCO")) {
             return JACOCO;
         }
@@ -68,6 +83,11 @@ public enum CoverageFormat {
             }
             return COBERTURA;
         }
+        return null;
+    }
+
+    /** Identifies the textual formats (Go, LCOV, SimpleCov) from a head snippet and filename. */
+    private static CoverageFormat detectTextual(String head, String name) {
         if (head.startsWith("mode:")) {
             return GO;
         }
@@ -77,10 +97,7 @@ public enum CoverageFormat {
         if (name.endsWith(".resultset.json") && head.contains("\"coverage\"")) {
             return SIMPLECOV;
         }
-
-        throw new CoverageException(
-                "unrecognized coverage report format: " + path
-                + " (expected JaCoCo, Cobertura, LCOV, Go profile, Clover, or SimpleCov)");
+        return null;
     }
 
     /**
@@ -95,41 +112,50 @@ public enum CoverageFormat {
             if (lt < 0) {
                 return false;
             }
-            if (head.startsWith("<?", lt)) {
-                i = head.indexOf("?>", lt);
-                if (i < 0) {
-                    return false;
-                }
-                i += 2;
-                continue;
+            int skipped = skipNonElement(head, lt);
+            if (skipped == lt) {
+                // Not a prolog/comment/doctype — this is the first real element.
+                return matchesTag(head, lt, tag);
             }
-            if (head.startsWith("<!--", lt)) {
-                i = head.indexOf("-->", lt);
-                if (i < 0) {
-                    return false;
-                }
-                i += 3;
-                continue;
+            if (skipped < 0) {
+                return false;
             }
-            if (head.startsWith("<!", lt)) {
-                i = head.indexOf('>', lt);
-                if (i < 0) {
-                    return false;
-                }
-                i += 1;
-                continue;
-            }
-            // First real element: must be <tag followed by whitespace or '>'.
-            int after = lt + 1 + tag.length();
-            if (head.regionMatches(lt + 1, tag, 0, tag.length())
-                    && after <= n
-                    && (after == n || Character.isWhitespace(head.charAt(after))
-                            || head.charAt(after) == '>')) {
-                return true;
-            }
-            return false;
+            i = skipped;
         }
         return false;
+    }
+
+    /**
+     * If {@code head} at {@code lt} starts a prolog ({@code <?...?>}), comment
+     * ({@code <!--...-->}), or DOCTYPE ({@code <!...>}), returns the index just
+     * past the construct; returns {@code -1} when the construct is unterminated;
+     * returns {@code lt} unchanged when the position is a real element tag.
+     */
+    private static int skipNonElement(String head, int lt) {
+        if (head.startsWith("<?", lt)) {
+            int end = head.indexOf("?>", lt);
+            return end < 0 ? -1 : end + 2;
+        }
+        if (head.startsWith("<!--", lt)) {
+            int end = head.indexOf("-->", lt);
+            return end < 0 ? -1 : end + 3;
+        }
+        if (head.startsWith("<!", lt)) {
+            int end = head.indexOf('>', lt);
+            return end < 0 ? -1 : end + 1;
+        }
+        return lt;
+    }
+
+    /** Whether the element at {@code lt} is {@code <tag} followed by whitespace or {@code >}. */
+    private static boolean matchesTag(String head, int lt, String tag) {
+        int n = head.length();
+        int after = lt + 1 + tag.length();
+        return head.regionMatches(lt + 1, tag, 0, tag.length())
+                && after <= n
+                && (after == n
+                        || Character.isWhitespace(head.charAt(after))
+                        || head.charAt(after) == '>');
     }
 
     private static String readHead(Path path) {

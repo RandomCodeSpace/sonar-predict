@@ -29,41 +29,58 @@ public final class TextReporter implements Reporter {
         if (byFile.isEmpty()) {
             out.append("No issues found.\n");
         } else {
-            for (Map.Entry<String, List<Issue>> entry : byFile.entrySet()) {
-                out.append(entry.getKey()).append('\n');
-                for (Issue issue : entry.getValue()) {
-                    out.append("  ")
-                            .append(issue.startLine()).append(':').append(issue.startColumn())
-                            .append("  ").append(issue.severity())
-                            .append("  ").append(issue.ruleKey())
-                            .append("  ").append(issue.message())
-                            .append('\n');
-                    appendRuleGuidance(out, index.lookup(issue.ruleKey()));
-                }
-            }
-            int count = response.issues().size();
-            out.append('\n')
-                    .append(count).append(count == 1 ? " issue" : " issues")
-                    .append(" in ").append(byFile.size())
-                    .append(byFile.size() == 1 ? " file.\n" : " files.\n");
+            appendIssues(out, byFile, index, response.issues().size());
         }
 
-        List<AnalysisWarning> warnings = response.warnings();
-        if (warnings != null && !warnings.isEmpty()) {
-            out.append('\n').append("Warnings:\n");
-            for (AnalysisWarning warning : warnings) {
-                out.append("  ");
-                if (warning.filePath() != null && !warning.filePath().isBlank()) {
-                    out.append(warning.filePath()).append(": ");
-                }
-                out.append(warning.message()).append('\n');
-            }
-        }
+        appendWarnings(out, response.warnings());
 
         if (coverage != null) {
             appendCoverage(out, coverage);
         }
         return out.toString();
+    }
+
+    /** Renders every per-file issue block and the trailing summary line. */
+    private static void appendIssues(StringBuilder out,
+                                     Map<String, List<Issue>> byFile,
+                                     RuleMetadataIndex index, int totalCount) {
+        for (Map.Entry<String, List<Issue>> entry : byFile.entrySet()) {
+            out.append(entry.getKey()).append('\n');
+            for (Issue issue : entry.getValue()) {
+                appendIssue(out, issue, index);
+            }
+        }
+        out.append('\n')
+                .append(totalCount).append(totalCount == 1 ? " issue" : " issues")
+                .append(" in ").append(byFile.size())
+                .append(byFile.size() == 1 ? " file.\n" : " files.\n");
+    }
+
+    /** Renders one issue line plus any indented rule guidance beneath it. */
+    private static void appendIssue(StringBuilder out, Issue issue,
+                                    RuleMetadataIndex index) {
+        out.append("  ")
+                .append(issue.startLine()).append(':').append(issue.startColumn())
+                .append("  ").append(issue.severity())
+                .append("  ").append(issue.ruleKey())
+                .append("  ").append(issue.message())
+                .append('\n');
+        appendRuleGuidance(out, index.lookup(issue.ruleKey()));
+    }
+
+    /** Renders the analysis-warnings section, if there are any. */
+    private static void appendWarnings(StringBuilder out, List<AnalysisWarning> warnings) {
+        if (warnings == null || warnings.isEmpty()) {
+            return;
+        }
+        out.append('\n').append("Warnings:\n");
+        for (AnalysisWarning warning : warnings) {
+            out.append("  ");
+            if (warning.filePath() != null && !warning.filePath().isBlank()) {
+                out.append(warning.filePath()).append(": ");
+            }
+            out.append(warning.message()).append('\n');
+        }
     }
 
     /**

@@ -32,6 +32,7 @@ public final class SarifReporter implements Reporter {
     private static final String SARIF_SCHEMA =
             "https://json.schemastore.org/sarif-2.1.0.json";
     private static final String SARIF_VERSION = "2.1.0";
+    private static final String SARIF_LEVEL_WARNING = "warning";
 
     @Override
     public String render(AnalyzeResponse response, RuleMetadataIndex index,
@@ -143,13 +144,13 @@ public final class SarifReporter implements Reporter {
     /** Maps an engine severity to a SARIF result level. */
     private static String level(String severity) {
         if (severity == null) {
-            return "warning";
+            return SARIF_LEVEL_WARNING;
         }
         return switch (severity.toUpperCase(Locale.ROOT)) {
             case "BLOCKER", "CRITICAL" -> "error";
-            case "MAJOR" -> "warning";
+            case "MAJOR" -> SARIF_LEVEL_WARNING;
             case "MINOR", "INFO" -> "note";
-            default -> "warning";
+            default -> SARIF_LEVEL_WARNING;
         };
     }
 

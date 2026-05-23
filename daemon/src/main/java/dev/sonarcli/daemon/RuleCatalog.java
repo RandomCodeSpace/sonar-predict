@@ -104,6 +104,15 @@ public final class RuleCatalog {
         return new RuleCatalog(rules);
     }
 
+    /**
+     * Suppresses {@code java:S5042} ("expanding an archive file") on this
+     * method: we never resolve a {@link JarEntry#getName()} to a filesystem
+     * path. Entry names are matched against a strict {@link #RULE_JSON} regex
+     * and used only to fetch the entry's bytes via
+     * {@link JarFile#getInputStream(java.util.zip.ZipEntry)} for in-memory
+     * parsing — no zip-slip surface exists here.
+     */
+    @SuppressWarnings("java:S5042")
     private static void indexJar(Path jarPath, Map<String, RuleMetadata> rules) {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             var it = jar.entries();
@@ -196,7 +205,7 @@ public final class RuleCatalog {
         }
         String upper = raw.toUpperCase(Locale.ROOT);
         return switch (upper) {
-            case "BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO" -> upper;
+            case "BLOCKER", "CRITICAL", DEFAULT_SEVERITY, "MINOR", "INFO" -> upper;
             default -> DEFAULT_SEVERITY;
         };
     }
@@ -207,7 +216,7 @@ public final class RuleCatalog {
         }
         String upper = raw.toUpperCase(Locale.ROOT);
         return switch (upper) {
-            case "BUG", "CODE_SMELL", "VULNERABILITY", "SECURITY_HOTSPOT" -> upper;
+            case "BUG", DEFAULT_TYPE, "VULNERABILITY", "SECURITY_HOTSPOT" -> upper;
             default -> DEFAULT_TYPE;
         };
     }

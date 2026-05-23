@@ -18,3 +18,8 @@ daemon/plugins/*.jar
 
 # sonar-predictor scan output, written by `bin/sonar agent-scan`. Never commit.
 .sonar-predictor/
+
+# Python bytecode (scan_parity.py compiles to scripts/__pycache__ when run locally).
+__pycache__/
+*.pyc
+

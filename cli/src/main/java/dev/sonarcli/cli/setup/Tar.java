@@ -3,6 +3,7 @@ package dev.sonarcli.cli.setup;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,13 +54,7 @@ final class Tar {
         try (GZIPInputStream gz = new GZIPInputStream(in)) {
             byte[] header = new byte[BLOCK];
             String longName = null;
-            while (true) {
-                if (!readFully(gz, header)) {
-                    return; // truncated/end of stream
-                }
-                if (isAllZero(header)) {
-                    return; // end-of-archive marker
-                }
+            while (readFully(gz, header) && !isAllZero(header)) {
                 String name = longName != null ? longName : cString(header, 0, NAME_LEN);
                 longName = null;
                 long size = parseOctal(header, SIZE_OFFSET, 12);
@@ -71,29 +66,39 @@ final class Tar {
                     longName = readEntryString(gz, size);
                     continue;
                 }
-
-                String relative = stripTopDir ? stripFirstComponent(name) : name;
-                if (relative == null || relative.isEmpty()) {
-                    skip(gz, padded(size));
-                    continue;
-                }
-                Path target = dest.resolve(relative).normalize();
-                if (!target.startsWith(dest)) {
-                    throw new IOException("tar entry escapes destination: " + name);
-                }
-
-                if (type == '5' || name.endsWith("/")) {
-                    Files.createDirectories(target);
-                    skip(gz, padded(size));
-                } else if (type == '0' || type == '\0') {
-                    Files.createDirectories(target.getParent());
-                    writeEntry(gz, target, size);
-                    applyMode(target, mode);
-                } else {
-                    // Symlinks and other types: skip the payload, ignore.
-                    skip(gz, padded(size));
-                }
+                extractEntry(gz, dest, stripTopDir, name, size, type, mode);
             }
+        }
+    }
+
+    /**
+     * Dispatches one tar entry: skips it when stripping leaves an empty path,
+     * creates a directory entry, writes a regular file, or skips any other
+     * entry type (symlinks, etc.).
+     */
+    private static void extractEntry(InputStream gz, Path dest, boolean stripTopDir,
+                                     String name, long size, char type, int mode)
+            throws IOException {
+        String relative = stripTopDir ? stripFirstComponent(name) : name;
+        if (relative == null || relative.isEmpty()) {
+            skip(gz, padded(size));
+            return;
+        }
+        Path target = dest.resolve(relative).normalize();
+        if (!target.startsWith(dest)) {
+            throw new IOException("tar entry escapes destination: " + name);
+        }
+
+        if (type == '5' || name.endsWith("/")) {
+            Files.createDirectories(target);
+            skip(gz, padded(size));
+        } else if (type == '0' || type == '\0') {
+            Files.createDirectories(target.getParent());
+            writeEntry(gz, target, size);
+            applyMode(target, mode);
+        } else {
+            // Symlinks and other types: skip the payload, ignore.
+            skip(gz, padded(size));
         }
     }
 
@@ -118,6 +123,13 @@ final class Tar {
         return new String(buf, 0, end, StandardCharsets.UTF_8);
     }
 
+    /**
+     * Suppresses {@code java:S2612}: the {@code OTHERS_EXECUTE} bit is mirrored
+     * from the trusted Temurin JRE tar entry's recorded mode (Temurin ships
+     * shared binaries as world-executable so any user can run the JRE); we
+     * are not granting permissions beyond what the verified archive declares.
+     */
+    @SuppressWarnings("java:S2612")
     private static void applyMode(Path file, int mode) {
         if ((mode & 0_111) == 0) {
             return; // no execute bits set
@@ -132,11 +144,22 @@ final class Tar {
                 perms.add(PosixFilePermission.GROUP_EXECUTE);
             }
             if ((mode & 0_001) != 0) {
+                // NOSONAR(java:S2612) the execute bit is mirrored from the
+                // tar entry's recorded mode (Temurin JRE binaries ship as
+                // world-executable); we are not granting permissions beyond
+                // what the trusted archive declares.
                 perms.add(PosixFilePermission.OTHERS_EXECUTE);
             }
             Files.setPosixFilePermissions(file, perms);
         } catch (UnsupportedOperationException | IOException notPosix) {
-            file.toFile().setExecutable(true);
+            // Owner-only execute is sufficient for our extracted JRE binaries;
+            // group/other execute are not required for the daemon launcher path.
+            if (!file.toFile().setExecutable(true, true)) {
+                throw new UncheckedIOException(new IOException(
+                        "could not mark " + file + " executable "
+                                + "(POSIX permissions unsupported and "
+                                + "File.setExecutable failed)"));
+            }
         }
     }
 

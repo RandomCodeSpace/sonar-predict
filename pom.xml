@@ -116,8 +116,40 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.2.5</version>
                 </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <!-- 0.8.13 adds class-file v69 (Java 25) support. Earlier
+                         versions throw "Unsupported class file major version 69"
+                         when test classes are compiled on Temurin 25. -->
+                    <version>0.8.13</version>
+                </plugin>
             </plugins>
         </pluginManagement>
+
+        <!--
+          JaCoCo instrumentation + XML report. Inherited by every child
+          module so `mvn verify` produces <module>/target/site/jacoco/jacoco.xml.
+          Those XMLs feed the scanner's coverage import flag; see the
+          project README for the canonical invocation.
+        -->
+        <plugins>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals><goal>prepare-agent</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals><goal>report</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 
     <profiles>

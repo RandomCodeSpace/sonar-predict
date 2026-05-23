@@ -62,6 +62,9 @@ class CommandTest {
 
         @Override
         public void shutdown() {
+            // Intentionally empty: these tests exercise ping/analyze/rule lookups;
+            // the CLI never invokes shutdown on the RPC stub, so a no-op is the
+            // intended behaviour and there is nothing to assert here.
         }
     }
 
@@ -172,6 +175,168 @@ class CommandTest {
         assertEquals(1, run.out().strip().lines().count(),
                 "JSON output must be a single compact line");
         assertTrue(run.out().contains("\"issueCount\":1"), "JSON must report the issue count");
+    }
+
+    @Test
+    @DisplayName("--save writes the report to PATH and emits a compact summary on stdout")
+    void saveWritesReportAndPrintsSummary(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(
+                        issue("Bad.java", "java:S1118", "CRITICAL"),
+                        issue("Bad.java", "java:S100", "MAJOR")),
+                List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(1, run.exitCode(), "issues found must exit 1 regardless of --save");
+
+        // The JSON report goes to the file, not stdout.
+        assertTrue(Files.exists(target), "--save target file must be created");
+        String written = Files.readString(target);
+        assertTrue(written.contains("\"issueCount\":2"),
+                "saved JSON must hold the full report, got: " + written.substring(0, Math.min(200, written.length())));
+        assertTrue(written.contains("java:S1118"));
+
+        // Stdout carries the compact native summary instead of the JSON.
+        String stdout = run.out();
+        assertFalse(stdout.contains("\"issueCount\""),
+                "stdout must not contain raw JSON when --save is used, got: " + stdout);
+        assertTrue(stdout.contains("sonar-predictor: 2 issues written to"),
+                "stdout must announce the count and target, got: " + stdout);
+        assertTrue(stdout.contains("severity:") && stdout.contains("CRITICAL=1") && stdout.contains("MAJOR=1"),
+                "stdout must include the severity rollup, got: " + stdout);
+        assertTrue(stdout.contains("type:") && stdout.contains("CODE_SMELL=2"),
+                "stdout must include the type rollup, got: " + stdout);
+    }
+
+    @Test
+    @DisplayName("--save summary rollups cover every severity + type preferred-order bucket")
+    void saveSummaryRollupsCoverAllBuckets(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        // One issue per severity bucket and per type bucket — exercises every
+        // branch of the rollup helper, including the per-bucket ordering and
+        // the type-vs-severity distinction.
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(
+                        new Issue("java:Sb", "Bad.java", 1, 0, 1, 5, "BLOCKER", "BUG", "m1"),
+                        new Issue("java:Sv", "Bad.java", 2, 0, 2, 5, "MINOR", "VULNERABILITY", "m2"),
+                        new Issue("java:Sh", "Bad.java", 3, 0, 3, 5, "INFO", "SECURITY_HOTSPOT", "m3"),
+                        new Issue("java:Sc", "Bad.java", 4, 0, 4, 5, "CRITICAL", "CODE_SMELL", "m4")),
+                List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(1, run.exitCode());
+        String stdout = run.out();
+
+        // Severity rollup — all four buckets we generated appear, in preferred
+        // order (BLOCKER before CRITICAL before MINOR before INFO).
+        int blocker = stdout.indexOf("BLOCKER=1");
+        int critical = stdout.indexOf("CRITICAL=1");
+        int minor = stdout.indexOf("MINOR=1");
+        int info = stdout.indexOf("INFO=1");
+        assertTrue(blocker >= 0 && critical >= 0 && minor >= 0 && info >= 0,
+                "every severity bucket must appear in the rollup, got: " + stdout);
+        assertTrue(blocker < critical && critical < minor && minor < info,
+                "severity rollup must preserve preferred order, got: " + stdout);
+
+        // Type rollup — BUG / CODE_SMELL / VULNERABILITY / SECURITY_HOTSPOT
+        // each contribute one issue.
+        assertTrue(stdout.contains("BUG=1") && stdout.contains("CODE_SMELL=1")
+                        && stdout.contains("VULNERABILITY=1") && stdout.contains("SECURITY_HOTSPOT=1"),
+                "every type bucket must appear in the rollup, got: " + stdout);
+
+        // And the saved file is the full JSON, not the summary.
+        String written = Files.readString(target);
+        assertTrue(written.contains("\"issueCount\":4"),
+                "saved JSON must hold the full report");
+    }
+
+    @Test
+    @DisplayName("--save to an unwritable target exits 2 with a clear error")
+    void saveToUnwritableTargetExitsTwo(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        // Pass the temp directory itself as the --save path. Files.writeString
+        // refuses to write a regular file at a directory's path, which exercises
+        // the IOException catch + rethrow-as-IllegalStateException branch.
+        StubRpc rpc = rpc();
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(issue("Bad.java", "java:S1118", "MAJOR")), List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", dir.toString(),
+                "check", source.toString());
+
+        assertEquals(2, run.exitCode(),
+                "an unwritable --save target must exit 2 (tool error)");
+        assertTrue(run.err().toLowerCase().contains("could not write report"),
+                "stderr must explain the write failure, got: " + run.err());
+    }
+
+    @Test
+    @DisplayName("--save rollup appends unknown type-buckets in sorted order after the preferred ones")
+    void saveRollupHandlesUnknownTypeBuckets(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        // BLOCKER severity passes the severity floor. Both issues carry a
+        // 'type' that's outside the preferred-order list (BUG / CODE_SMELL /
+        // VULNERABILITY / SECURITY_HOTSPOT), forcing the rollup to fall
+        // through to its unknown-bucket sorting branch.
+        rpc.analyzeResult = new AnalyzeResponse(
+                List.of(
+                        new Issue("custom:R1", "Bad.java", 1, 0, 1, 5, "BLOCKER", "WEIRDTYPE", "m1"),
+                        new Issue("custom:R2", "Bad.java", 2, 0, 2, 5, "BLOCKER", "OTHER", "m2")),
+                List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(1, run.exitCode());
+        String stdout = run.out();
+        int other = stdout.indexOf("OTHER=1");
+        int weird = stdout.indexOf("WEIRDTYPE=1");
+        assertTrue(other >= 0 && weird >= 0,
+                "unknown type buckets must appear in the rollup, got: " + stdout);
+        assertTrue(other < weird,
+                "unknown type buckets must be sorted alphabetically, got: " + stdout);
+    }
+
+    @Test
+    @DisplayName("--save on a clean scan still writes the report and emits the summary, exit 0")
+    void saveCleanScanWritesEmptyReport(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("Clean.java"), "class Clean {}");
+        Path target = dir.resolve(".sonar-predictor").resolve("scan.json");
+        StubRpc rpc = rpc();
+        rpc.analyzeResult = new AnalyzeResponse(List.of(), List.of());
+
+        Run run = run(rpc, control(),
+                "--format", "json",
+                "--save", target.toString(),
+                "check", source.toString());
+
+        assertEquals(0, run.exitCode(), "no issues must exit 0 even with --save");
+        assertTrue(Files.exists(target), "--save target file must be created even when clean");
+        assertTrue(run.out().contains("sonar-predictor: 0 issues written to"),
+                "stdout must still announce the 0-issue result, got: " + run.out());
+        // Severity / type rollup lines are skipped when there are no issues —
+        // assert their absence so the summary stays compact.
+        assertFalse(run.out().contains("severity:"),
+                "no severity rollup when there are no issues, got: " + run.out());
     }
 
     @Test

@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -12,6 +14,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -106,7 +109,7 @@ public final class AnalysisService implements AutoCloseable {
      * exercise the {@link #close}-waits-for-analysis path deterministically.
      * {@code null} (a no-op) in production.
      */
-    private volatile Runnable analysisEnteredHook;
+    private final AtomicReference<Runnable> analysisEnteredHook = new AtomicReference<>();
 
     /**
      * Builds a warm service over the resolved analyzer-plugin directory: the
@@ -168,7 +171,7 @@ public final class AnalysisService implements AutoCloseable {
         // time, and close() must be able to wait behind an in-flight call.
         analysisLock.lock();
         try {
-            Runnable hook = analysisEnteredHook;
+            Runnable hook = analysisEnteredHook.get();
             if (hook != null) {
                 hook.run();
             }
@@ -427,7 +430,7 @@ public final class AnalysisService implements AutoCloseable {
      * @param hook the hook to run after the analysis lock is acquired
      */
     void setAnalysisEnteredHookForTest(Runnable hook) {
-        this.analysisEnteredHook = hook;
+        this.analysisEnteredHook.set(hook);
     }
 
     /**
@@ -651,7 +654,7 @@ public final class AnalysisService implements AutoCloseable {
 
     private static Path createWorkDir() {
         try {
-            Path dir = Files.createTempDirectory("sonar-daemon-work");
+            Path dir = createPrivateTempDir("sonar-daemon-work");
             // Safety net: if the process dies before close() runs (a SIGKILL,
             // an OOM, an unhandled error), a JVM shutdown hook still removes
             // the directory. File#deleteOnExit is not used: it is non-recursive
@@ -662,6 +665,33 @@ public final class AnalysisService implements AutoCloseable {
             return dir;
         } catch (IOException e) {
             throw new UncheckedIOException("could not create analysis work directory", e);
+        }
+    }
+
+    /**
+     * Creates a temp directory readable, writable, and executable only by the
+     * owner (POSIX {@code rwx------}). On a non-POSIX filesystem (e.g. Windows)
+     * the POSIX attribute is unsupported, so falls back to the no-attribute
+     * form — Windows ACLs make the per-user temp directory owner-restricted by
+     * default, so the fallback is not world-readable in practice.
+     */
+    /**
+     * Creates a temp directory with owner-only POSIX permissions
+     * ({@code rwx------}) where the OS supports it. Suppresses
+     * {@code java:S5443}: the rule fires on any
+     * {@link Files#createTempDirectory(String, FileAttribute[])} call, but the
+     * explicit {@code rwx------} attribute is exactly the safe variant the
+     * rule wants. The non-POSIX fallback (Windows) is acceptable because
+     * Windows' per-user temp dir is owner-restricted via ACL by default.
+     */
+    @SuppressWarnings("java:S5443")
+    private static Path createPrivateTempDir(String prefix) throws IOException {
+        try {
+            FileAttribute<?> ownerOnly = PosixFilePermissions.asFileAttribute(
+                    PosixFilePermissions.fromString("rwx------"));
+            return Files.createTempDirectory(prefix, ownerOnly);
+        } catch (UnsupportedOperationException nonPosix) {
+            return Files.createTempDirectory(prefix);
         }
     }
 

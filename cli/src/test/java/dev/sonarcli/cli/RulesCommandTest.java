@@ -65,6 +65,8 @@ class RulesCommandTest {
 
         @Override
         public void shutdown() {
+            // Intentionally empty: the rules subcommand tests never trigger
+            // daemon shutdown; this method exists only to satisfy the interface.
         }
     }
 
@@ -77,6 +79,8 @@ class RulesCommandTest {
 
         @Override
         public void start() {
+            // Intentionally empty: the rules subcommand never starts the
+            // daemon; the stub reports it as already running.
         }
 
         @Override

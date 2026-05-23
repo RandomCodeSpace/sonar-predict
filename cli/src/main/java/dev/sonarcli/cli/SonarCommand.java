@@ -109,6 +109,16 @@ public final class SonarCommand implements Runnable {
                     "e.g. --test-path 'src/integration/**'."})
     private java.util.List<String> additionalTestPaths = new java.util.ArrayList<>();
 
+    @Option(names = "--save", paramLabel = "PATH",
+            description = {
+                    "Write the formatted report (per --format) to PATH",
+                    "instead of stdout. Stdout then carries a compact summary —",
+                    "issue count, severity and type breakdown, target file —",
+                    "so an agent or CI step gets a usable signal without",
+                    "ever needing to parse the report itself.",
+                    "Removes the need for jq in agent wrappers."})
+    private String savePath;
+
     @Spec
     private CommandSpec spec;
 
@@ -174,13 +184,84 @@ public final class SonarCommand implements Runnable {
             case TEXT -> new TextReporter();
             case SARIF -> new SarifReporter();
         };
-        out.print(reporter.render(reported, index, coverage));
+        String rendered = reporter.render(reported, index, coverage);
+
+        if (savePath != null && !savePath.isEmpty()) {
+            // --save: report goes to the file, summary to stdout. Lets an
+            // agent / CI step skip raw-report parsing and avoid pulling in jq.
+            java.nio.file.Path target = java.nio.file.Path.of(savePath).toAbsolutePath();
+            try {
+                java.nio.file.Files.createDirectories(target.getParent());
+                java.nio.file.Files.writeString(target, rendered,
+                        java.nio.charset.StandardCharsets.UTF_8);
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException(
+                        "could not write report to " + target + ": " + e.getMessage(), e);
+            }
+            writeSummary(out, filtered, target.toString(), coverage);
+        } else {
+            out.print(rendered);
+        }
         out.flush();
 
         boolean issuesFail = !filtered.isEmpty();
         boolean coverageFail = coverage != null && coverageOptions.min() != null
                 && coverage.overallPercent() < coverageOptions.min();
         return issuesFail || coverageFail ? EXIT_ISSUES : EXIT_CLEAN;
+    }
+
+    /**
+     * Writes the compact "{N} issues written to {path}" summary used by the
+     * agent / CI invocation path. Three lines max: total, severity rollup,
+     * type rollup. Kept tiny so it never crowds an agent's context.
+     */
+    private static void writeSummary(PrintWriter out, List<Issue> issues,
+                                     String target,
+                                     dev.sonarcli.cli.coverage.CoverageReport coverage) {
+        out.printf("sonar-predictor: %d issues written to %s%n", issues.size(), target);
+        if (!issues.isEmpty()) {
+            out.print("  severity: ");
+            out.println(rollup(issues, Issue::severity,
+                    java.util.List.of("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")));
+            out.print("  type:     ");
+            out.println(rollup(issues, Issue::type,
+                    java.util.List.of("BUG", "CODE_SMELL", "VULNERABILITY", "SECURITY_HOTSPOT")));
+        }
+        if (coverage != null) {
+            out.printf("  coverage: %.2f%% line%n", coverage.overallPercent());
+        }
+    }
+
+    /**
+     * "{KEY}={count} {KEY}={count} ..." rendering, with the keys in the given
+     * preferred order, omitting zero-count keys. Unknown keys (out-of-band
+     * severities/types from a custom analyzer) are appended at the end in
+     * sorted order so they're still visible.
+     */
+    private static String rollup(List<Issue> issues,
+                                 java.util.function.Function<Issue, String> bucket,
+                                 List<String> preferredOrder) {
+        java.util.Map<String, Long> counts = issues.stream()
+                .map(bucket)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.groupingBy(
+                        java.util.function.Function.identity(),
+                        java.util.stream.Collectors.counting()));
+        StringBuilder sb = new StringBuilder();
+        for (String key : preferredOrder) {
+            Long c = counts.remove(key);
+            if (c != null && c > 0) {
+                if (sb.length() > 0) sb.append(' ');
+                sb.append(key).append('=').append(c);
+            }
+        }
+        counts.entrySet().stream()
+                .sorted(java.util.Map.Entry.comparingByKey())
+                .forEach(e -> {
+                    if (sb.length() > 0) sb.append(' ');
+                    sb.append(e.getKey()).append('=').append(e.getValue());
+                });
+        return sb.toString();
     }
 
     /**
@@ -488,18 +569,18 @@ public final class SonarCommand implements Runnable {
             return EXIT_CLEAN;
         }
 
-        /** Adds owner/group/other execute permission, where the FS supports it. */
+        /** Adds owner-only execute permission, where the FS supports it. */
         private static void makeExecutable(java.nio.file.Path file) throws java.io.IOException {
             try {
                 var perms = new java.util.HashSet<>(
                         java.nio.file.Files.getPosixFilePermissions(file));
+                // Owner-only execute: a per-user git hook never needs to be
+                // runnable by group/other.
                 perms.add(java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE);
-                perms.add(java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE);
-                perms.add(java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE);
                 java.nio.file.Files.setPosixFilePermissions(file, perms);
             } catch (UnsupportedOperationException notPosix) {
-                // Non-POSIX filesystem — fall back to the File API.
-                if (!file.toFile().setExecutable(true)) {
+                // Non-POSIX filesystem — fall back to the File API (owner-only).
+                if (!file.toFile().setExecutable(true, true)) {
                     throw new java.io.IOException(
                             "could not make the hook executable: " + file);
                 }
