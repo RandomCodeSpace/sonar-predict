@@ -124,6 +124,15 @@ public final class SonarWayProfiles {
         return new SonarWayProfiles(byLanguage);
     }
 
+    /**
+     * Suppresses {@code java:S5042} ("expanding an archive file") on this
+     * method: we never resolve a {@link JarEntry#getName()} to a filesystem
+     * path. Entry names are matched against a strict {@link #PROFILE_JSON}
+     * regex and used only to fetch the entry's bytes via
+     * {@link JarFile#getInputStream(java.util.zip.ZipEntry)} for in-memory
+     * parsing — no zip-slip surface exists here.
+     */
+    @SuppressWarnings("java:S5042")
     private static void indexJar(Path jarPath, Map<SonarLanguage, List<String>> byLanguage) {
         try (JarFile jar = new JarFile(jarPath.toFile())) {
             var it = jar.entries();

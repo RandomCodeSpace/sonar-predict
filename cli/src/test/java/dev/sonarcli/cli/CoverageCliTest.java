@@ -61,6 +61,8 @@ class CoverageCliTest {
 
         @Override
         public void shutdown() {
+            // Intentionally empty: the coverage tests do not exercise daemon
+            // shutdown; the no-op satisfies the interface contract for this stub.
         }
     }
 
@@ -73,6 +75,8 @@ class CoverageCliTest {
 
         @Override
         public void start() {
+            // Intentionally empty: this stub reports the daemon as already
+            // running, so start() is never expected to do anything meaningful.
         }
 
         @Override

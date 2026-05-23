@@ -28,6 +28,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import dev.sonarcli.protocol.MessageCodec;
 import dev.sonarcli.protocol.WireMessage;
@@ -92,8 +93,9 @@ public final class DaemonServer {
     private final Duration idleTimeout;
     private final Duration connectionTimeout;
 
-    private volatile java.util.function.Function<WireMessage, WireMessage> dispatcher;
-    private volatile Runnable onStop = () -> { };
+    private final AtomicReference<java.util.function.Function<WireMessage, WireMessage>> dispatcher =
+            new AtomicReference<>();
+    private final AtomicReference<Runnable> onStop = new AtomicReference<>(() -> { });
 
     private final CountDownLatch listeningLatch = new CountDownLatch(1);
     private final CountDownLatch stoppedLatch = new CountDownLatch(1);
@@ -125,11 +127,11 @@ public final class DaemonServer {
      * in {@link #start}, retained only so a test can assert it is closed when
      * {@code bind()} fails. Not used by production logic.
      */
-    private volatile ServerSocketChannel lastOpenedChannel;
+    private final AtomicReference<ServerSocketChannel> lastOpenedChannel = new AtomicReference<>();
 
     private Thread acceptThread;
     private ScheduledExecutorService idleScheduler;
-    private volatile ScheduledFuture<?> idleTask;
+    private final AtomicReference<ScheduledFuture<?>> idleTask = new AtomicReference<>();
 
     /**
      * Identity token of the currently-armed idle task. A scheduled idle task
@@ -140,7 +142,7 @@ public final class DaemonServer {
      * {@link #claimRequest}; volatile so a test helper can read the live token
      * without contending for that monitor.
      */
-    private volatile Object idleTaskToken;
+    private final AtomicReference<Object> idleTaskToken = new AtomicReference<>();
 
     /**
      * Test-only seam: run inside the synchronized {@link #claimRequest} block,
@@ -148,14 +150,14 @@ public final class DaemonServer {
      * released. A test sets this to force the idle timer to fire at exactly the
      * frame-read→claim instant and prove the claimed request still completes.
      */
-    private volatile Runnable onRequestClaimed = () -> { };
+    private final AtomicReference<Runnable> onRequestClaimed = new AtomicReference<>(() -> { });
 
     /**
      * Test-only seam: run at the very start of a scheduled idle task, before
      * it contends for the server monitor. A test uses it to observe that the
      * idle timer fired while a request claim is in progress.
      */
-    private volatile Runnable onIdleTaskFired = () -> { };
+    private final AtomicReference<Runnable> onIdleTaskFired = new AtomicReference<>(() -> { });
 
     /** Bounded pool that serves accepted connections; created in {@link #start}. */
     private ExecutorService connectionPool;
@@ -190,7 +192,7 @@ public final class DaemonServer {
             Duration idleTimeout,
             Duration connectionTimeout) {
         this.socketPath = Objects.requireNonNull(socketPath, "socketPath");
-        this.dispatcher = dispatcher;
+        this.dispatcher.set(dispatcher);
         this.idleTimeout = Objects.requireNonNull(idleTimeout, "idleTimeout");
         this.connectionTimeout =
                 Objects.requireNonNull(connectionTimeout, "connectionTimeout");
@@ -213,7 +215,7 @@ public final class DaemonServer {
      * been closed rather than leaked.
      */
     boolean lastOpenedChannelIsOpen() {
-        ServerSocketChannel channel = lastOpenedChannel;
+        ServerSocketChannel channel = lastOpenedChannel.get();
         return channel != null && channel.isOpen();
     }
 
@@ -233,7 +235,7 @@ public final class DaemonServer {
      * frame-read vs idle-shutdown race deterministically from another thread.
      */
     void forceIdleTimeoutCheck() {
-        idleTimeoutFired(idleTaskToken);
+        idleTimeoutFired(idleTaskToken.get());
     }
 
     /**
@@ -246,7 +248,7 @@ public final class DaemonServer {
      * @param onRequestClaimed the callback; must not block on the server monitor
      */
     void setOnRequestClaimed(Runnable onRequestClaimed) {
-        this.onRequestClaimed = Objects.requireNonNull(onRequestClaimed, "onRequestClaimed");
+        this.onRequestClaimed.set(Objects.requireNonNull(onRequestClaimed, "onRequestClaimed"));
     }
 
     /**
@@ -256,12 +258,12 @@ public final class DaemonServer {
      * @param onIdleTaskFired the callback; must not block on the server monitor
      */
     void setOnIdleTaskFired(Runnable onIdleTaskFired) {
-        this.onIdleTaskFired = Objects.requireNonNull(onIdleTaskFired, "onIdleTaskFired");
+        this.onIdleTaskFired.set(Objects.requireNonNull(onIdleTaskFired, "onIdleTaskFired"));
     }
 
     /** Sets the request dispatcher; must be set before {@link #start}. */
     public void setDispatcher(java.util.function.Function<WireMessage, WireMessage> dispatcher) {
-        this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
+        this.dispatcher.set(Objects.requireNonNull(dispatcher, "dispatcher"));
     }
 
     /**
@@ -278,7 +280,7 @@ public final class DaemonServer {
      * @param onStop the teardown callback; must be set before {@link #start}
      */
     public void setOnStop(Runnable onStop) {
-        this.onStop = Objects.requireNonNull(onStop, "onStop");
+        this.onStop.set(Objects.requireNonNull(onStop, "onStop"));
     }
 
     /**
@@ -288,7 +290,7 @@ public final class DaemonServer {
      * @throws IllegalStateException if no dispatcher has been set
      */
     public void start() {
-        if (dispatcher == null) {
+        if (dispatcher.get() == null) {
             throw new IllegalStateException("dispatcher must be set before start()");
         }
         // Open into a local so a bind() failure does not leak the channel:
@@ -299,7 +301,7 @@ public final class DaemonServer {
         try {
             Files.deleteIfExists(socketPath);
             ServerSocketChannel channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
-            lastOpenedChannel = channel;
+            lastOpenedChannel.set(channel);
             try {
                 channel.bind(UnixDomainSocketAddress.of(socketPath));
             } catch (IOException | RuntimeException bindFailure) {
@@ -414,7 +416,7 @@ public final class DaemonServer {
             idleScheduler.shutdownNow();
         }
         try {
-            onStop.run();
+            onStop.get().run();
         } catch (RuntimeException ignored) {
             // A teardown failure must not leave the socket file behind or
             // strand a caller waiting on awaitStopped().
@@ -485,7 +487,7 @@ public final class DaemonServer {
                 // client between frames is still reaped.
                 watchdog = rearmConnectionTimeout(watchdog, connection);
                 try {
-                    WireMessage response = dispatcher.apply(request);
+                    WireMessage response = dispatcher.get().apply(request);
                     MessageCodec.writeMessage(out, response);
                 } finally {
                     if (inFlight.decrementAndGet() == 0) {
@@ -565,12 +567,12 @@ public final class DaemonServer {
         // Test-only seam — see onRequestClaimed. Runs while the monitor is
         // held and inFlight is already incremented, so a concurrently-firing
         // idle task is forced to block here and then abort on inFlight > 0.
-        onRequestClaimed.run();
-        if (idleTask != null) {
-            idleTask.cancel(false);
-            idleTask = null;
+        onRequestClaimed.get().run();
+        ScheduledFuture<?> current = idleTask.getAndSet(null);
+        if (current != null) {
+            current.cancel(false);
         }
-        idleTaskToken = null;
+        idleTaskToken.set(null);
     }
 
     /**
@@ -588,23 +590,23 @@ public final class DaemonServer {
         if (stopping.get() || idleScheduler == null || idleScheduler.isShutdown()) {
             return;
         }
-        if (idleTask != null) {
-            idleTask.cancel(false);
-            idleTask = null;
+        ScheduledFuture<?> current = idleTask.getAndSet(null);
+        if (current != null) {
+            current.cancel(false);
         }
-        idleTaskToken = null;
+        idleTaskToken.set(null);
         if (inFlight.get() > 0) {
             // A request is executing — defer arming until it completes.
             return;
         }
         Object token = new Object();
-        idleTaskToken = token;
+        idleTaskToken.set(token);
         try {
-            idleTask = idleScheduler.schedule(
+            idleTask.set(idleScheduler.schedule(
                     () -> idleTimeoutFired(token),
-                    idleTimeout.toMillis(), TimeUnit.MILLISECONDS);
+                    idleTimeout.toMillis(), TimeUnit.MILLISECONDS));
         } catch (RejectedExecutionException stopped) {
-            idleTaskToken = null;
+            idleTaskToken.set(null);
         }
     }
 
@@ -619,12 +621,12 @@ public final class DaemonServer {
      * @param token the identity token captured when this task was armed
      */
     private void idleTimeoutFired(Object token) {
-        onIdleTaskFired.run();
+        onIdleTaskFired.get().run();
         synchronized (this) {
-            if (stopping.get() || idleTaskToken != token || inFlight.get() > 0) {
+            if (stopping.get() || idleTaskToken.get() != token || inFlight.get() > 0) {
                 return; // superseded, or a request is in flight — do not stop.
             }
-            idleTaskToken = null;
+            idleTaskToken.set(null);
         }
         stop();
     }

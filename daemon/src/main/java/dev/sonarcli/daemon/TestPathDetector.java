@@ -82,26 +82,36 @@ public final class TestPathDetector {
             return false;
         }
         String normalized = relativePath.replace('\\', '/');
+        return matchesCommonTestPath(normalized)
+                || matchesLanguageTestFilename(normalized, language);
+    }
 
+    /** Path-segment check — cross-language, always runs first. */
+    private static boolean matchesCommonTestPath(String normalizedPath) {
         for (Pattern p : COMMON_PATH_PATTERNS) {
-            if (p.matcher(normalized).find()) {
+            if (p.matcher(normalizedPath).find()) {
                 return true;
             }
         }
+        return false;
+    }
 
-        if (language != null) {
-            List<Pattern> patterns = FILENAME_PATTERNS.get(language);
-            if (patterns != null) {
-                int slash = normalized.lastIndexOf('/');
-                String filename = slash < 0 ? normalized : normalized.substring(slash + 1);
-                for (Pattern p : patterns) {
-                    if (p.matcher(filename).matches()) {
-                        return true;
-                    }
-                }
+    /** Filename check — per-language. No-op when {@code language} is null. */
+    private static boolean matchesLanguageTestFilename(String normalizedPath, SonarLanguage language) {
+        if (language == null) {
+            return false;
+        }
+        List<Pattern> patterns = FILENAME_PATTERNS.get(language);
+        if (patterns == null) {
+            return false;
+        }
+        int slash = normalizedPath.lastIndexOf('/');
+        String filename = slash < 0 ? normalizedPath : normalizedPath.substring(slash + 1);
+        for (Pattern p : patterns) {
+            if (p.matcher(filename).matches()) {
+                return true;
             }
         }
-
         return false;
     }
 }

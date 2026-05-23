@@ -46,6 +46,12 @@ public final class EngineSpike {
     /** java:S1118 -- utility classes should not have public constructors. */
     private static final String RULE_KEY = "java:S1118";
 
+    /**
+     * Suppresses {@code java:S5443}: this is exploratory / spike code, not in
+     * the production reactor. Standard {@link Files#createTempDirectory} is
+     * acceptable for a developer-run experiment.
+     */
+    @SuppressWarnings("java:S5443")
     public static void main(String[] args) throws Exception {
         if (args.length != 3) {
             System.err.println("Usage: EngineSpike <plugin-jar> <fixture-dir> <fixture-file>");

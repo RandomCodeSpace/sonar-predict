@@ -50,6 +50,8 @@ class HelpTest {
 
         @Override
         public void shutdown() {
+            // Intentionally empty: help rendering never contacts the daemon,
+            // so the stub has nothing to clean up. No-op is the contract.
         }
     }
 
@@ -62,6 +64,8 @@ class HelpTest {
 
         @Override
         public void start() {
+            // Intentionally empty: help rendering never starts the daemon;
+            // this stub exists only to satisfy the interface for SonarCommand.
         }
 
         @Override

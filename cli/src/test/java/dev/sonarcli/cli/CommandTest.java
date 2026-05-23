@@ -62,6 +62,9 @@ class CommandTest {
 
         @Override
         public void shutdown() {
+            // Intentionally empty: these tests exercise ping/analyze/rule lookups;
+            // the CLI never invokes shutdown on the RPC stub, so a no-op is the
+            // intended behaviour and there is nothing to assert here.
         }
     }
 

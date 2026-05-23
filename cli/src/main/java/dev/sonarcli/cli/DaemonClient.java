@@ -47,6 +47,9 @@ import dev.sonarcli.protocol.dto.RuleMetadata;
  */
 public final class DaemonClient implements DaemonRpc {
 
+    /** JSON field the daemon uses to signal a failure payload. */
+    private static final String ERROR_FIELD = "error";
+
     private final SocketPaths paths;
     private final DaemonLauncher launcher;
 
@@ -89,9 +92,9 @@ public final class DaemonClient implements DaemonRpc {
         WireMessage response = exchange(
                 new WireMessage(newId(), Method.RULE_METADATA, null));
         JsonNode body = response.payload();
-        if (body != null && body.isObject() && body.has("error")) {
+        if (body != null && body.isObject() && body.has(ERROR_FIELD)) {
             throw new DaemonException(
-                    "daemon error (RULE_METADATA): " + body.get("error").asText());
+                    "daemon error (RULE_METADATA): " + body.get(ERROR_FIELD).asText());
         }
         try {
             return Json.mapper().convertValue(
@@ -119,9 +122,9 @@ public final class DaemonClient implements DaemonRpc {
     private <T> T call(Method method, JsonNode payload, Class<T> responseType) {
         WireMessage response = exchange(new WireMessage(newId(), method, payload));
         JsonNode body = response.payload();
-        if (body != null && body.isObject() && body.has("error")) {
+        if (body != null && body.isObject() && body.has(ERROR_FIELD)) {
             throw new DaemonException(
-                    "daemon error (" + method + "): " + body.get("error").asText());
+                    "daemon error (" + method + "): " + body.get(ERROR_FIELD).asText());
         }
         try {
             return Json.mapper().treeToValue(body, responseType);

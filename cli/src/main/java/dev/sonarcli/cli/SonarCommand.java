@@ -488,18 +488,18 @@ public final class SonarCommand implements Runnable {
             return EXIT_CLEAN;
         }
 
-        /** Adds owner/group/other execute permission, where the FS supports it. */
+        /** Adds owner-only execute permission, where the FS supports it. */
         private static void makeExecutable(java.nio.file.Path file) throws java.io.IOException {
             try {
                 var perms = new java.util.HashSet<>(
                         java.nio.file.Files.getPosixFilePermissions(file));
+                // Owner-only execute: a per-user git hook never needs to be
+                // runnable by group/other.
                 perms.add(java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE);
-                perms.add(java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE);
-                perms.add(java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE);
                 java.nio.file.Files.setPosixFilePermissions(file, perms);
             } catch (UnsupportedOperationException notPosix) {
-                // Non-POSIX filesystem — fall back to the File API.
-                if (!file.toFile().setExecutable(true)) {
+                // Non-POSIX filesystem — fall back to the File API (owner-only).
+                if (!file.toFile().setExecutable(true, true)) {
                     throw new java.io.IOException(
                             "could not make the hook executable: " + file);
                 }

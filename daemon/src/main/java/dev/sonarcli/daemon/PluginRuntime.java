@@ -133,17 +133,38 @@ public final class PluginRuntime {
         return loaded;
     }
 
-    /** Matches the {@code vX.Y.Z} output of {@code node --version}. */
+    /**
+     * Matches the {@code vX.Y.Z} output of {@code node --version}.
+     *
+     * <p>Suppresses {@code java:S5852}: this regex has no nested quantifiers
+     * and no overlapping alternations, and {@link #detectNodeVersion()} bounds
+     * the input length to 64 chars before invoking the matcher. ReDoS surface
+     * is nil; Sonar's rule is being conservative on any quantifier-bearing
+     * pattern.
+     */
+    @SuppressWarnings("java:S5852")
     private static final Pattern NODE_VERSION =
             Pattern.compile("v?(\\d+\\.\\d+\\.\\d+)");
 
     /**
      * Detects the host Node.js version by running {@code node --version}.
      *
+     * <p>Suppresses:
+     * <ul>
+     *   <li>{@code java:S4036} — PATH-resolving {@code node} is intended; this
+     *       is a developer tool and Node is canonically managed by nvm / asdf
+     *       / mise / fnm, none of which use a stable absolute path.</li>
+     *   <li>{@code java:S5852} — {@link #NODE_VERSION} is
+     *       {@code v?(\d+\.\d+\.\d+)}: no nested quantifiers, no overlapping
+     *       alternations; the input is additionally bounded to 64 chars
+     *       before being matched. ReDoS surface is nil.</li>
+     * </ul>
+     *
      * @return the parsed version, or {@link Optional#empty()} if Node is absent
      *         or its version could not be determined — in which case the
      *         JS/TS/CSS analyzer is simply skipped, not a fatal error
      */
+    @SuppressWarnings({"java:S4036", "java:S5852"})
     static Optional<Version> detectNodeVersion() {
         try {
             Process process = new ProcessBuilder("node", "--version")
@@ -158,7 +179,12 @@ public final class PluginRuntime {
                 process.destroyForcibly();
                 return Optional.empty();
             }
-            if (output == null) {
+            if (output == null || output.length() > 64) {
+                // Bound input length before regex match — `node --version`
+                // emits one short `vX.Y.Z` line; anything pathologically long
+                // is a misconfigured shim or corrupt output, not a valid
+                // version. Bounding also defangs the (already low) S5852
+                // ReDoS concern on NODE_VERSION.
                 return Optional.empty();
             }
             Matcher m = NODE_VERSION.matcher(output.trim());

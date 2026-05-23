@@ -53,6 +53,8 @@ class InstallHookCommandTest {
 
         @Override
         public void shutdown() {
+            // Intentionally empty: install-hook never invokes daemon shutdown,
+            // so this stub method is reached only via interface contract.
         }
     }
 
@@ -65,6 +67,8 @@ class InstallHookCommandTest {
 
         @Override
         public void start() {
+            // Intentionally empty: install-hook only writes git hook files; it
+            // never starts the daemon, so this stub method must do nothing.
         }
 
         @Override

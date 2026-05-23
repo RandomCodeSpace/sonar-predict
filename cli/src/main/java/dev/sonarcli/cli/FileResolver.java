@@ -153,6 +153,13 @@ public final class FileResolver {
         return rebased(base, existing);
     }
 
+    /**
+     * Suppresses {@code java:S4036}: {@code sonar} is a developer tool invoked
+     * from a developer shell; PATH-resolving {@code git} is the intended
+     * behaviour, not a tampering vector. Hard-coding {@code /usr/bin/git}
+     * would break Homebrew, asdf, mise, nix, and Windows installs.
+     */
+    @SuppressWarnings("java:S4036")
     private static List<String> gitDiffNames(Path workingTree, String ref) {
         ProcessBuilder builder = new ProcessBuilder(
                 "git", "diff", "--name-only", ref)
