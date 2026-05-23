@@ -15,6 +15,6 @@ Exit codes: `0` clean, `1` issues found, `2` tool error.
 
 Acting on findings: fix `BUG`/`VULNERABILITY`/`SECURITY_HOTSPOT` and `CRITICAL`/`MAJOR` first. This is a fast first-pass gate, not the release gate — fix the real issues and move on.
 
-**Air-gapped / pre-staged installs.** Set `SONAR_PREDICTOR_HOME=/path/to/extracted/sonar-predictor` to point the launcher at a pre-downloaded bundle and skip the first-run download.
+**Configuration / corporate environments.** The launcher reads `config.env` next to this `SKILL.md` — Maven proxy URL, JRE download URL, bundle and Java version pins. Edit it (or override with same-named env vars) to point at a corporate Nexus / Artifactory mirror and a private JRE source. The defaults use Maven Central and Adoptium Temurin's public API. `SONAR_PREDICTOR_HOME=/path/to/extracted/sonar-predictor` skips the bundle download entirely for fully air-gapped / pre-staged installs.
 
 **Plugin-bundled agent variants.** Two named scanner subagents ship with this plugin: invoke `sonar-scanner-claude` on Claude Code (model: haiku) or `sonar-scanner-copilot` on GitHub Copilot CLI (model: gpt-5-mini). Selection is by agent name — pick the one matching your platform.

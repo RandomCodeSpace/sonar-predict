@@ -1,20 +1,34 @@
 @echo off
 rem Bootstrap wrapper for the sonar-predictor skill bundle (Windows).
 rem
-rem On first invocation, downloads the analyzer bundle (~150 MB) from Maven
-rem Central into the user cache, verifies its SHA-1, and unpacks it. Every
-rem subsequent call dispatches to the cached launcher directly — no network.
+rem Loads ../config.env (KEY=VALUE lines, # for comments) and uses the
+rem configured Maven proxy + bundle version to download the analyzer bundle
+rem on first invocation. Env vars of the same name take precedence over the
+rem file.
 rem
-rem Override the bundle location for air-gapped or pre-staged installs:
+rem Java auto-install is NOT yet supported on Windows — install Java 17+
+rem manually (or set JAVA_HOME). The bundle's own launcher will discover it.
+rem
+rem Override the bundle location for air-gapped / pre-staged installs:
 rem   set SONAR_PREDICTOR_HOME=C:\path\to\extracted\sonar-predictor
 
 setlocal enabledelayedexpansion
 
-rem v0.1.2's dist artifact on Central is the (now-removed) plugin-bundle shape,
-rem not the skill-bundle this wrapper expects. v0.1.1 is the last good skill
-rem bundle; v0.1.3 onwards will be skill-shaped again.
-set "VERSION=0.1.1"
-set "BASE_URL=https://repo1.maven.org/maven2/io/github/randomcodespace/sonarpredict/sonar-predictor-dist/%VERSION%"
+rem ---- 1. load config.env (env vars already set win) ----
+set "CONFIG=%~dp0..\config.env"
+if exist "%CONFIG%" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%a in ("%CONFIG%") do (
+    if not "%%a"=="" if not defined %%a set "%%a=%%b"
+  )
+)
+
+rem ---- defaults ----
+if not defined SONAR_MAVEN_REPO_URL set "SONAR_MAVEN_REPO_URL=https://repo1.maven.org/maven2"
+if not defined SONAR_BUNDLE_VERSION set "SONAR_BUNDLE_VERSION=0.1.1"
+
+set "VERSION=%SONAR_BUNDLE_VERSION%"
+set "ARTIFACT=sonar-predictor-dist"
+set "BUNDLE_URL_BASE=%SONAR_MAVEN_REPO_URL%/io/github/randomcodespace/sonarpredict/sonar-predictor-dist/%VERSION%"
 
 if defined SONAR_PREDICTOR_HOME (
   set "SKILL_DIR=%SONAR_PREDICTOR_HOME%"
@@ -30,7 +44,7 @@ set "REAL_SONAR=%SKILL_DIR%\bin\sonar.bat"
 
 if exist "%REAL_SONAR%" goto :exec
 
-echo sonar-predictor: first run -- downloading %VERSION% bundle from Maven Central... 1>&2
+echo sonar-predictor: first run -- downloading %VERSION% bundle from %SONAR_MAVEN_REPO_URL%... 1>&2
 
 set "TMP=%TEMP%\sonar-predictor-bootstrap-%RANDOM%-%RANDOM%"
 mkdir "%TMP%" || (echo sonar-predictor: failed to create temp dir 1>&2 & exit /b 2)
@@ -39,11 +53,11 @@ set "ZIP=%TMP%\bundle.zip"
 set "SHA=%TMP%\bundle.zip.sha1"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '%BASE_URL%/sonar-predictor-dist-%VERSION%.zip' -OutFile '%ZIP%' } catch { exit 2 }"
+  "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '%BUNDLE_URL_BASE%/%ARTIFACT%-%VERSION%.zip' -OutFile '%ZIP%' } catch { exit 2 }"
 if errorlevel 1 (echo sonar-predictor: bundle download failed 1>&2 & rmdir /S /Q "%TMP%" & exit /b 2)
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '%BASE_URL%/sonar-predictor-dist-%VERSION%.zip.sha1' -OutFile '%SHA%' } catch { exit 2 }"
+  "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '%BUNDLE_URL_BASE%/%ARTIFACT%-%VERSION%.zip.sha1' -OutFile '%SHA%' } catch { exit 2 }"
 if errorlevel 1 (echo sonar-predictor: SHA-1 download failed 1>&2 & rmdir /S /Q "%TMP%" & exit /b 2)
 
 for /f "tokens=1" %%i in (%SHA%) do set "EXPECTED=%%i"
