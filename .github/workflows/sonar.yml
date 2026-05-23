@@ -73,13 +73,30 @@ jobs:
       # XMLs are passed in as coverage evidence — one per Java module that
       # produces coverage. agent-scan writes JSON to .sonar-predictor/scan.json
       # and prints a human summary on stdout; we want both.
+      #
+      # IMPORTANT: the CLI uses three-state exit codes
+      #   0 = clean (no findings at the floor)
+      #   1 = issues found (a normal scan outcome, not a failure)
+      #   2 = tool error (broken input, daemon unreachable, no Java)
+      # Step success means "the scanner ran". Whether the *result* should
+      # fail the build is decided by the Quality gate step below. We must
+      # not let `bash -e` propagate exit-1 from a healthy scan as a job
+      # failure; we propagate exit code only when it's >= 2.
       - name: Run self-scan
         run: |
+          set +e
           export SONAR_PREDICTOR_HOME="$(pwd)/dist/target/skill/sonar-predictor"
           ./plugin/skills/sonar-predictor/bin/sonar agent-scan analyze . \
             --coverage protocol/target/site/jacoco/jacoco.xml \
             --coverage daemon/target/site/jacoco/jacoco.xml \
             --coverage cli/target/site/jacoco/jacoco.xml
+          rc=$?
+          set -e
+          echo "Self-scan exit code: $rc (0=clean, 1=issues found, 2+=tool error)"
+          if [ "$rc" -ge 2 ]; then
+            echo "::error::Self-scan tool error (exit $rc) — see step log."
+            exit "$rc"
+          fi
 
       # Render headline counts into the GitHub job summary so reviewers see
       # the scan result inline on the run page without downloading artifacts.
