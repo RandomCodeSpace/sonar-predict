@@ -13,11 +13,9 @@ import org.sonarsource.sonarlint.core.analysis.api.ClientInputFile;
 import org.sonarsource.sonarlint.core.commons.api.SonarLanguage;
 
 /**
- * {@link ClientInputFile} backed by a real file on disk.
- *
- * <p>Ported from the engine spike's {@code FileClientInputFile}, extended to
- * carry an explicit {@link SonarLanguage} and to derive a {@code /}-separated
- * relative path from a base directory.
+ * {@link ClientInputFile} backed by a real file on disk. Carries an explicit
+ * {@link SonarLanguage} and derives a {@code /}-separated relative path from
+ * a base directory (the engine expects forward slashes regardless of OS).
  */
 public final class FileInputFile implements ClientInputFile {
 
