@@ -45,17 +45,16 @@ It is **scan-only** — it reads your source and reports findings, and never mod
 
 ## Quick start
 
-Grab the self-contained bundle from the [latest release](https://github.com/RandomCodeSpace/sonar-predict/releases/latest) — it carries the CLI, the daemon and all 12 analyzers:
+`sonar-predictor` installs as a Claude Code / GitHub Copilot CLI plugin from this repo's built-in marketplace. The plugin is tiny (kilobytes); the analyzer bundle is fetched lazily from Maven Central on first scan and cached locally for every subsequent run.
 
-```sh
-curl -L -o sonar-predictor.zip \
-  https://github.com/RandomCodeSpace/sonar-predict/releases/download/v0.1.0/sonar-predict-skill-0.1.0.zip
-unzip sonar-predictor.zip -d sonar-predictor
-
-./sonar-predictor/bin/sonar check src/Main.java
+```
+/plugin marketplace add RandomCodeSpace/sonar-predict
+/plugin install sonar-predictor@sonar-predict
 ```
 
-The launcher auto-discovers a Java 17+ runtime and starts the daemon on first use — no configuration.
+The same two commands work on Claude Code and Copilot CLI — they share the `.claude-plugin` format. Two named scanner subagents come with the plugin: `sonar-scanner-claude` (model: haiku) and `sonar-scanner-copilot` (model: gpt-5-mini); selection is by agent name.
+
+Prefer the raw CLI? Grab the skill bundle directly from the [latest release](https://github.com/RandomCodeSpace/sonar-predict/releases/latest) and run `./bin/sonar` from the unpacked directory. The first invocation auto-discovers Java 17+ (or downloads one if none is found); every subsequent call is offline.
 
 ## Usage
 
@@ -77,18 +76,26 @@ sonar --format json check --diff
 sonar --coverage target/site/jacoco/jacoco.xml --coverage-min 80 analyze .
 ```
 
-## Use it as an AI-agent skill
+## Corporate / air-gapped setup
 
-`sonar-predictor` is packaged as a [Claude Code](https://claude.com/claude-code) skill — an
-agent discovers it and runs it as a quality gate automatically. Install the bundle into your
-skills directory:
+The plugin's launcher reads a single configuration file at `plugin/skills/sonar-predictor/config.env`. Edit it (or set the same-named environment variable, which takes precedence) to point at a corporate Maven proxy, a private JRE mirror, or a vendored bundle version — no code changes.
+
+| Key | What it controls |
+|-----|------------------|
+| `SONAR_MAVEN_REPO_URL` | Where the analyzer bundle is downloaded from. Default: Maven Central. |
+| `SONAR_BUNDLE_VERSION` | Bundle version pin. Bump in lockstep with each plugin release. |
+| `SONAR_MIN_JAVA_VERSION` | Minimum Java major version required. Default: `17`. |
+| `SONAR_JRE_URL_TEMPLATE` | JRE source for auto-download (when none is on the system). Tokens `{os}` `{arch}` `{version}` are substituted at runtime. Default: Adoptium Temurin API. |
+| `SONAR_JRE_VERSION` | JRE version to fetch. Default: `17`. |
+| `SONAR_DISABLE_JRE_AUTODOWNLOAD` | Set to `1` to refuse the JRE auto-download (corp-policy escape hatch). |
+
+For a fully pre-staged install — no network at all on the developer machine — extract a skill bundle by hand into a known location and point the launcher at it:
 
 ```sh
-unzip sonar-predict-skill-0.1.0.zip -d ~/.claude/skills/
+export SONAR_PREDICTOR_HOME=/opt/sonar-predictor
 ```
 
-The bundled `SKILL.md` tells the agent when to run it and how to read its output; the CLI's
-own `--help` is the single source of truth for commands.
+The forking workflow: clone this repo, edit `plugin/skills/sonar-predictor/config.env`, push to your fork, `/plugin marketplace add <your-org>/sonar-predict`. One file.
 
 ## How it works
 
@@ -134,6 +141,15 @@ smells, vulnerabilities and security hotspots — and imports coverage. It is a 
 first-pass, **not** a replacement for release-time gates: the SonarQube server's deep
 cross-file taint analysis, Fortify, and dependency/CVE scanning remain their own tools.
 
-## License
+## License & third-party components
 
-[Apache License 2.0](LICENSE).
+This project (the CLI, daemon, protocol, dist module, plugin scaffolding) is licensed under the [Apache License 2.0](LICENSE).
+
+The SonarSource analyzers and engine that `sonar-predictor` invokes at runtime are **third-party components with their own licenses**, listed in [NOTICE](NOTICE). Headline points:
+
+- **`sonarlint-analysis-engine`** (the embedded analysis runtime, by SonarSource) — **LGPL v3**.
+- **SonarSource language analyzers** (`sonar-java`, `sonar-python`, `sonar-javascript`, `sonar-php`, `sonar-kotlin`, `sonar-go`, `sonar-ruby`, `sonar-scala`, `sonar-html`, `sonar-xml`) — **SONAR Source-Available License v1.0 (SSALv1)** since SonarSource's 2024 license change. Source-available, free for internal use, with restrictions on operating a competing "Service Offering".
+
+The plugin **does not redistribute** these JARs — its launcher fetches them from Maven Central on first invocation (the same channel SonarSource themselves publish to). Editing `SONAR_MAVEN_REPO_URL` to a corporate mirror that proxies Maven Central is equivalent. None of this project's source code is derived from SonarSource code.
+
+For a deeper inventory and the legal text of each license, see [NOTICE](NOTICE). If your environment's policy needs the analyzer JARs to come from somewhere other than Maven Central, the corporate / air-gapped setup above is your knob.

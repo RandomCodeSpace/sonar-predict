@@ -1,0 +1,99 @@
+sonar-predictor
+Copyright 2025–2026 Amit Kumar and the sonar-predict contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+`sonar-predictor` invokes third-party analyzers and libraries at runtime. The
+following components are NOT redistributed inside this repository (the
+installable plugin) — the launcher downloads them on first invocation from
+Maven Central. They are listed here for transparency about what your machine
+runs after you install this plugin.
+
+------------------------------------------------------------------------------
+SonarSource analysis engine
+------------------------------------------------------------------------------
+
+  org.sonarsource.sonarlint.core:sonarlint-analysis-engine
+  License: GNU Lesser General Public License v3.0 (LGPL-3.0)
+  Source : https://github.com/SonarSource/sonarlint-core
+
+  The embedded analysis runtime — the same engine that powers SonarLint in
+  IDEs. The CLI and daemon link to it as a normal library dependency, which
+  is the use LGPL-3.0 is specifically designed to allow under any combining
+  license (including Apache 2.0).
+
+------------------------------------------------------------------------------
+SonarSource language analyzers
+------------------------------------------------------------------------------
+
+  org.sonarsource.java     :sonar-java-plugin
+  org.sonarsource.python   :sonar-python-plugin
+  org.sonarsource.javascript:sonar-javascript-plugin
+  org.sonarsource.php      :sonar-php-plugin
+  org.sonarsource.kotlin   :sonar-kotlin-plugin
+  org.sonarsource.slang    :sonar-go-plugin
+  org.sonarsource.slang    :sonar-ruby-plugin
+  org.sonarsource.slang    :sonar-scala-plugin
+  org.sonarsource.html     :sonar-html-plugin
+  org.sonarsource.xml      :sonar-xml-plugin
+
+  License: SONAR Source-Available License v1.0 (SSALv1)
+  Text   : https://www.sonarsource.com/license/ssal/
+
+  These are the per-language rule packs the analysis engine loads at runtime.
+  SonarSource relicensed them from LGPL v3 to SSALv1 in 2024. SSALv1 is
+  "source-available": it permits free internal use and free local execution
+  (what this tool does), and restricts using the analyzers to operate a
+  competing "Service Offering". Read the full license text at the link above
+  before using `sonar-predictor` to build a hosted service offering.
+
+  No source code from these analyzers is included in this repository.
+  `sonar-predictor` invokes them only through the public SonarSource APIs
+  exposed by sonarlint-analysis-engine.
+
+------------------------------------------------------------------------------
+Build-time / direct-dependency Apache 2.0 components
+------------------------------------------------------------------------------
+
+  info.picocli:picocli                              (CLI framework)
+  com.fasterxml.jackson.core:jackson-*              (JSON serialization)
+  org.apache.maven.plugins:maven-* and the embedded
+  build-helper / central-publishing-maven-plugin    (build tooling)
+
+  All Apache License 2.0.
+
+------------------------------------------------------------------------------
+Runtime JRE auto-download (optional)
+------------------------------------------------------------------------------
+
+  When no Java 17+ runtime is found on the user's machine, the plugin's
+  bootstrap launcher fetches a JRE from the URL configured in
+  `plugin/skills/sonar-predictor/config.env`. The public default uses the
+  Adoptium Temurin API (https://api.adoptium.net), which serves Eclipse
+  Temurin OpenJDK builds under the GNU General Public License v2 with the
+  Classpath Exception (GPL-2.0 WITH Classpath-exception-2.0).
+
+  An air-gapped or corporate setup can replace this URL with a private JRE
+  mirror; the bootstrap does not require Adoptium specifically.
+
+================================================================================
+NOTES ON THE BUNDLED MAVEN CENTRAL ARTIFACT
+================================================================================
+
+The launcher currently downloads a single archive,
+`sonar-predictor-dist-<version>.zip`, from Maven Central. That archive (built
+and published by this project's release workflow) contains the SonarSource
+analyzer JARs alongside this project's own CLI and daemon jars, repackaged
+unmodified.
+
+A future release will change the launcher to fetch each analyzer JAR
+individually from Maven Central using its published coordinates, so that
+SonarSource's own Maven Central distribution is the sole redistribution
+channel and `sonar-predict-dist-*.zip` no longer carries third-party JARs.
+This eliminates any redistribution question about the SSALv1-licensed
+analyzers. The plugin's `config.env` already isolates the Maven repository
+URL, so this transition is transparent to corporate Maven proxy setups.

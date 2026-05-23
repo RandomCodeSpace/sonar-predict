@@ -1,36 +1,73 @@
 #!/usr/bin/env bash
 # Bootstrap wrapper for the sonar-predictor skill bundle.
 #
-# On first invocation, downloads the analyzer bundle (~150 MB) from Maven
-# Central into the user cache, verifies its SHA-1, and unpacks it. Every
-# subsequent call exec's the cached launcher directly — no network.
+# On first invocation:
+#   1. loads ../config.env (corporate Maven proxy, JRE mirror, version pin),
+#   2. downloads sonar-predictor-dist-<VERSION>.zip from SONAR_MAVEN_REPO_URL,
+#      verifies its SHA-1 sidecar, and unpacks it into the user cache,
+#   3. ensures a Java >= SONAR_MIN_JAVA_VERSION is available — downloading
+#      one from SONAR_JRE_URL_TEMPLATE into the user cache if not found
+#      (the bundle's own launcher already searches JAVA_HOME / PATH / common
+#       install dirs; this only kicks in when that comes up empty),
+#   4. exec's the cached launcher.
+# Every subsequent call exec's the cached launcher directly with no network.
 #
-# Override the bundle location for air-gapped or pre-staged installs:
+# Override the bundle location for air-gapped / pre-staged installs:
 #   SONAR_PREDICTOR_HOME=/path/to/extracted/sonar-predictor
+#
+# All other knobs (Maven proxy, JRE source, version pin, min Java) live in
+# ../config.env; each one is also an env-var override.
 
 set -euo pipefail
 
-# Pinned to the bundle version published to Maven Central. Bumped in lockstep
-# with the plugin's release: each tagged plugin release publishes a matching
-# sonar-predictor-dist-<VERSION>.zip and updates this pin.
-#
-# Note: v0.1.2's dist artifact on Central is the (now-removed) plugin-bundle
-# shape, not the skill-bundle this wrapper expects. v0.1.1 is the last good
-# skill bundle; v0.1.3 onwards will be skill-shaped again.
-VERSION="0.1.1"
+# -------- 1. load config -----------------------------------------------------
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
+CONFIG="$HERE/../config.env"
+
+if [ -f "$CONFIG" ]; then
+  # Parse KEY=VALUE lines; env vars already in scope take precedence.
+  while IFS='=' read -r key value; do
+    case "$key" in
+      ''|'#'*) continue ;;
+    esac
+    key="${key%%[[:space:]]*}"
+    if [ -z "${!key:-}" ]; then
+      printf -v "$key" '%s' "$value"
+      export "$key"
+    fi
+  done < "$CONFIG"
+fi
+
+# Defaults if config.env is missing or empty.
+: "${SONAR_MAVEN_REPO_URL:=https://repo1.maven.org/maven2}"
+: "${SONAR_BUNDLE_VERSION:=0.1.1}"
+: "${SONAR_MIN_JAVA_VERSION:=17}"
+: "${SONAR_JRE_URL_TEMPLATE:=https://api.adoptium.net/v3/binary/latest/{version}/ga/{os}/{arch}/jre/hotspot/normal/eclipse}"
+: "${SONAR_JRE_VERSION:=17}"
+: "${SONAR_DISABLE_JRE_AUTODOWNLOAD:=}"
+
+VERSION="$SONAR_BUNDLE_VERSION"
 GROUP_PATH="io/github/randomcodespace/sonarpredict"
 ARTIFACT="sonar-predictor-dist"
-BASE_URL="https://repo1.maven.org/maven2/${GROUP_PATH}/${ARTIFACT}/${VERSION}"
+BUNDLE_URL_BASE="${SONAR_MAVEN_REPO_URL%/}/${GROUP_PATH}/${ARTIFACT}/${VERSION}"
 
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/sonar-predictor"
 if [ -n "${SONAR_PREDICTOR_HOME:-}" ]; then
   SKILL_DIR="$SONAR_PREDICTOR_HOME"
 else
-  CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/sonar-predictor"
   SKILL_DIR="$CACHE_ROOT/$VERSION"
 fi
-
 REAL_SONAR="$SKILL_DIR/bin/sonar"
+
+# -------- helpers ------------------------------------------------------------
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "sonar-predictor: required command '$1' not found on PATH" >&2
+    exit 2
+  fi
+}
 
 sha1_of() {
   if command -v sha1sum >/dev/null 2>&1; then
@@ -43,46 +80,202 @@ sha1_of() {
   fi
 }
 
-if [ ! -x "$REAL_SONAR" ]; then
-  for cmd in curl unzip; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      echo "sonar-predictor: required command '$cmd' not found on PATH" >&2
-      exit 2
+java_major_of() {
+  local v raw maj
+  v="$("$1" -version 2>&1 | head -1)" || return 1
+  raw="$(printf '%s' "$v" | sed -E 's/^[^"]*"([^"]+)".*/\1/')"
+  [ -n "$raw" ] || return 1
+  maj="$(printf '%s' "$raw" | cut -d. -f1)"
+  if [ "$maj" = "1" ]; then
+    maj="$(printf '%s' "$raw" | cut -d. -f2)"
+  fi
+  printf '%s' "$maj"
+}
+
+found_java_meets_min() {
+  # The bundle's own launcher searches JAVA_HOME, PATH and common dirs. We
+  # only need to know whether *some* working Java >= the minimum exists; if
+  # so, we hand off to it. Otherwise we install one and set JAVA_HOME so the
+  # bundle's launcher picks it up.
+  local cand major
+  for cand in \
+      "${JAVA_HOME:-}/bin/java" \
+      "$(command -v java 2>/dev/null || true)" \
+      /usr/lib/jvm/*/bin/java \
+      /usr/java/*/bin/java \
+      /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java \
+      "${HOME:-/nonexistent}"/.sdkman/candidates/java/*/bin/java \
+      /opt/java/*/bin/java \
+      /opt/*/bin/java
+  do
+    [ -x "$cand" ] || continue
+    major="$(java_major_of "$cand" 2>/dev/null || true)"
+    [ -n "$major" ] || continue
+    if [ "$major" -ge "$SONAR_MIN_JAVA_VERSION" ] 2>/dev/null; then
+      return 0
     fi
   done
+  return 1
+}
 
-  echo "sonar-predictor: first run — downloading $VERSION bundle from Maven Central..." >&2
+detect_os_arch() {
+  case "$(uname -s)" in
+    Linux*)  OS=linux ;;
+    Darwin*) OS=mac ;;
+    *) echo "sonar-predictor: unsupported OS '$(uname -s)' for JRE auto-download" >&2; exit 2 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64)  ARCH=x64 ;;
+    aarch64|arm64) ARCH=aarch64 ;;
+    *) echo "sonar-predictor: unsupported arch '$(uname -m)' for JRE auto-download" >&2; exit 2 ;;
+  esac
+}
+
+install_jre() {
+  local jre_dir="$CACHE_ROOT/jre/$SONAR_JRE_VERSION"
+  if [ -x "$jre_dir/bin/java" ]; then
+    export JAVA_HOME="$jre_dir"
+    return 0
+  fi
+
+  case "${SONAR_DISABLE_JRE_AUTODOWNLOAD:-}" in
+    1|true|yes|TRUE|YES)
+      echo "sonar-predictor: no Java >= $SONAR_MIN_JAVA_VERSION found, and SONAR_DISABLE_JRE_AUTODOWNLOAD is set" >&2
+      exit 2
+      ;;
+  esac
+
+  require_cmd curl
+  require_cmd tar
+  detect_os_arch
+
+  local url="$SONAR_JRE_URL_TEMPLATE"
+  url="${url//\{os\}/$OS}"
+  url="${url//\{arch\}/$ARCH}"
+  url="${url//\{version\}/$SONAR_JRE_VERSION}"
+
+  echo "sonar-predictor: no Java $SONAR_MIN_JAVA_VERSION+ found — downloading JRE $SONAR_JRE_VERSION ($OS/$ARCH) from $url" >&2
+  mkdir -p "$(dirname "$jre_dir")"
+
+  local tmp; tmp="$(mktemp -d)"
+  curl -fsSL --retry 3 -o "$tmp/jre.tgz" "$url"
+  ( cd "$tmp" && tar -xzf jre.tgz )
+
+  # Find the JRE root (the dir whose bin/java is executable). Handles both
+  # Linux layout (.../jdk-17.../bin/java) and macOS layout
+  # (.../jdk-17.../Contents/Home/bin/java).
+  local java_path home
+  java_path="$(find "$tmp" -mindepth 2 -path '*/bin/java' -type f -executable 2>/dev/null | head -1 || true)"
+  if [ -z "$java_path" ]; then
+    echo "sonar-predictor: downloaded JRE has no bin/java; archive layout unrecognised" >&2
+    rm -rf "$tmp"
+    exit 2
+  fi
+  home="${java_path%/bin/java}"
+  mv "$home" "$jre_dir"
+  rm -rf "$tmp"
+
+  if [ ! -x "$jre_dir/bin/java" ]; then
+    echo "sonar-predictor: JRE install completed but $jre_dir/bin/java is missing" >&2
+    exit 2
+  fi
+  export JAVA_HOME="$jre_dir"
+}
+
+# -------- 2. ensure bundle is cached ----------------------------------------
+
+if [ ! -x "$REAL_SONAR" ]; then
+  require_cmd curl
+  require_cmd unzip
+
+  echo "sonar-predictor: first run — downloading $VERSION bundle from $SONAR_MAVEN_REPO_URL..." >&2
   mkdir -p "$(dirname "$SKILL_DIR")"
   TMP="$(mktemp -d)"
   trap 'rm -rf "$TMP"' EXIT
 
-  ZIP="$TMP/bundle.zip"
-  SHA="$TMP/bundle.zip.sha1"
+  curl -fsSL --retry 3 -o "$TMP/bundle.zip"      "$BUNDLE_URL_BASE/$ARTIFACT-$VERSION.zip"
+  curl -fsSL --retry 3 -o "$TMP/bundle.zip.sha1" "$BUNDLE_URL_BASE/$ARTIFACT-$VERSION.zip.sha1"
 
-  curl -fsSL --retry 3 -o "$ZIP" "$BASE_URL/$ARTIFACT-$VERSION.zip"
-  curl -fsSL --retry 3 -o "$SHA" "$BASE_URL/$ARTIFACT-$VERSION.zip.sha1"
-
-  EXPECTED="$(awk '{print $1}' "$SHA")"
-  ACTUAL="$(sha1_of "$ZIP")"
+  EXPECTED="$(awk '{print $1}' "$TMP/bundle.zip.sha1")"
+  ACTUAL="$(sha1_of "$TMP/bundle.zip")"
   if [ "$EXPECTED" != "$ACTUAL" ]; then
     echo "sonar-predictor: SHA-1 verification failed (expected $EXPECTED, got $ACTUAL)" >&2
     exit 2
   fi
 
-  unzip -q "$ZIP" -d "$TMP/extracted"
+  unzip -q "$TMP/bundle.zip" -d "$TMP/extracted"
   if [ ! -d "$TMP/extracted/sonar-predictor" ]; then
-    echo "sonar-predictor: unexpected bundle layout (no sonar-predictor/ dir at zip root)" >&2
+    echo "sonar-predictor: unexpected bundle layout (no sonar-predictor/ at zip root)" >&2
     exit 2
   fi
 
-  # If another invocation populated the cache while we were downloading,
-  # respect its work — atomically rename, ignoring failure on race.
   mv "$TMP/extracted/sonar-predictor" "$SKILL_DIR" 2>/dev/null || true
+  trap - EXIT
+  rm -rf "$TMP"
 
   if [ ! -x "$REAL_SONAR" ]; then
     echo "sonar-predictor: bootstrap completed but $REAL_SONAR is not executable" >&2
     exit 2
   fi
+fi
+
+# -------- 3. ensure a usable Java is available ------------------------------
+
+if ! found_java_meets_min; then
+  install_jre
+fi
+
+# -------- 4. hand off -------------------------------------------------------
+
+if [ -n "${JAVA_HOME:-}" ]; then
+  export JAVA_HOME
+  export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
+# The `agent-scan` subcommand bakes the out-of-context discipline into the
+# tool: run the scan with JSON output redirected to .sonar-predictor/scan.json
+# at the project root, add that path to .gitignore on first use, and print a
+# compact summary on stdout. The calling agent reports the summary and the
+# file path; deeper drill-down happens with jq on the file, on demand.
+agent_scan() {
+  local scan_file=".sonar-predictor/scan.json"
+  mkdir -p "$(dirname "$scan_file")"
+
+  # Add the scan dir to .gitignore on first use, only inside a git repo.
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    if [ ! -f .gitignore ] || ! grep -qF '.sonar-predictor/' .gitignore; then
+      printf '\n# sonar-predictor scan output (do not commit)\n.sonar-predictor/\n' >> .gitignore
+    fi
+  fi
+
+  # No args -> default to `check --diff` (the git changeset).
+  if [ $# -eq 0 ]; then
+    set -- check --diff
+  fi
+
+  local rc=0
+  set +e
+  "$REAL_SONAR" --format json "$@" > "$scan_file" 2>&1
+  rc=$?
+  set -e
+
+  if command -v jq >/dev/null 2>&1; then
+    local total sev
+    total="$(jq -r '(.issueCount // ([.files[]?.issues[]?] | length))' "$scan_file" 2>/dev/null)"
+    sev="$(jq -rc '[.files[]?.issues[]?.severity] | group_by(.) | map("\(.[0])=\(length)") | join(" ")' "$scan_file" 2>/dev/null)"
+    echo "sonar-predictor: ${total:-?} issues written to $scan_file"
+    [ -n "$sev" ] && echo "  severity: $sev"
+    echo "  query: jq '...' $scan_file"
+  else
+    echo "sonar-predictor: scan complete -> $scan_file (install jq for an inline summary)"
+  fi
+  return "$rc"
+}
+
+if [ "${1:-}" = "agent-scan" ]; then
+  shift
+  agent_scan "$@"
+  exit "$?"
 fi
 
 exec "$REAL_SONAR" "$@"

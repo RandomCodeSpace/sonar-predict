@@ -15,40 +15,47 @@ and safe.
 You are given a scope: a directory, a repository, a file list, or "the git
 changeset". Scan exactly that — no more, no less.
 
-## Running the scanner — keep its output OUT of your context
+## Running the scanner — `bin/sonar agent-scan`
 
-Invoke the `sonar-predictor` skill (via the `skill` tool). It exposes the
-analyzer CLI and tells you how to invoke it — read its `SKILL.md` and the
-tool's own `--help`. Do not assume command syntax.
+Invoke the `sonar-predictor` skill (via the `skill` tool). The skill's
+`bin/sonar agent-scan [scope]` subcommand writes the full JSON output to
+`.sonar-predictor/scan.json` at the project root and adds that path to
+`.gitignore` on first use, so the analyzer's large output never enters your
+context. It prints a compact summary on stdout — issue count, severity
+breakdown, file path.
 
-**Critical:** a full scan emits a large JSON document — bigger than a context
-window. Never let that output land in your context, and never `view` or read
-the raw JSON. Always:
+Default scope is the current git changeset (no arg). Pass explicit scope
+after `agent-scan`:
 
-1. Redirect JSON output to a temp file (e.g. `... --format json <command> ... > "$J" 2>&1`).
-2. Extract a small summary from that file with `jq`.
-3. Report only those small extracts, then delete the temp file.
+- `agent-scan` — git changeset (default)
+- `agent-scan check src/Main.java` — specific files
+- `agent-scan analyze src/` — whole directory
+
+Read `bin/sonar --help` for the underlying command vocabulary if you need
+something unusual; don't guess flag names.
 
 Exit codes: `0` clean, `1` issues found (a normal result, not a failure),
-`2` tool error (report it verbatim).
+`2` tool error.
 
-A `jq` recipe — issues are nested under `.files[].issues[]`:
+## What to report
+
+The stdout summary from `agent-scan` is your top-line: issue count, severity
+counts, and the `.sonar-predictor/scan.json` path. Report that verbatim plus
+a one-line verdict.
+
+If your caller wants drill-down (specific files, specific rules, criticals
+only), query the JSON file with `jq` — never `view` it raw. Issues are nested
+under `.files[].issues[]`:
 
 ```sh
-jq -r '.issueCount' "$J"
-jq -rc '[.files[].issues[].severity]|group_by(.)|map("\(.[0])=\(length)")|join(" ")' "$J"
-jq -rc '[.files[].issues[].type]|group_by(.)|map("\(.[0])=\(length)")|join(" ")' "$J"
+jq -rc '[.files[]?.issues[]?.type] | group_by(.) | map("\(.[0])=\(length)") | join(" ")' .sonar-predictor/scan.json
 jq -r '["BLOCKER","CRITICAL","MAJOR","MINOR","INFO"] as $r
   | [.files[] as $f | $f.issues[]
      | {s:.severity,k:.ruleKey,f:($f.file|split("/")|last),l:.startLine,m:.message}]
   | sort_by(.s as $x | $r|index($x)) | .[0:8][]
-  | "  \(.s) \(.k) \(.f):\(.l) \(.m[0:80])"' "$J"
-jq -rc '.warnings' "$J"
+  | "  \(.s) \(.k) \(.f):\(.l) \(.m[0:80])"' .sonar-predictor/scan.json
+jq -rc '.warnings' .sonar-predictor/scan.json
 ```
 
-## What to report
-
-A concise summary — never the raw JSON, never a file-by-file dump: the total
-issue count, the severity and type breakdown, the ~8 highest-severity findings
-as `ruleKey file:line message`, and any analyzer warnings (a skipped language
-or a crashed sensor means files went unanalyzed). State the verdict plainly.
+Never dump raw JSON, never do a file-by-file walk. Concise, actionable summary
+only.
