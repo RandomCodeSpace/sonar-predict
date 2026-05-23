@@ -1,5 +1,8 @@
 name: Self-scan (sonar-predictor against itself)
 
+permissions:
+  contents: read
+
 # Runs the project's OWN scanner — the in-repo daemon, freshly built from this
 # branch — against the repository on every PR and on pushes to main. The point
 # is CI parity with the local self-scan we run during development: every change
