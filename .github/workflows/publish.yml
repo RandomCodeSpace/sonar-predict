@@ -92,6 +92,18 @@ jobs:
             -DnewVersion="${{ steps.version.outputs.version }}" \
             -DgenerateBackupPoms=false
 
+      - name: Sync skill bundle version pin to the release version
+        # The skill launcher reads SONAR_BUNDLE_VERSION from config.env to
+        # decide which sonar-predictor-dist-<version>.zip to fetch from
+        # Maven Central on first invocation. If config.env is stale, an
+        # installed plugin downloads the wrong bundle. Forcing the pin to
+        # match the tag here removes that trap from every future release.
+        run: |
+          set -euo pipefail
+          CONFIG=plugin/skills/sonar-predictor/config.env
+          sed -i "s|^SONAR_BUNDLE_VERSION=.*|SONAR_BUNDLE_VERSION=${{ steps.version.outputs.version }}|" "${CONFIG}"
+          grep '^SONAR_BUNDLE_VERSION' "${CONFIG}"
+
       - name: Build the source bundle (whole-repo git archive of HEAD)
         # Built BEFORE the deploy: the release profile's build-helper plugin
         # attaches this zip (from the repo root) to the Maven Central upload,
