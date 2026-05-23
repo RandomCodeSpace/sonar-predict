@@ -1,0 +1,24 @@
+{
+  "name": "sonar-predict",
+  "owner": {
+    "name": "Amit Kumar",
+    "url": "https://github.com/RandomCodeSpace"
+  },
+  "plugins": [
+    {
+      "name": "sonar-predictor",
+      "source": "./plugin",
+      "description": "Offline SonarSource quality gate — runs the genuine SonarSource analyzers locally (no network, no server) to catch bugs, code smells, vulnerabilities and security hotspots. The plugin itself is lightweight (kilobytes); the heavy analyzer bundle is fetched from Maven Central on first invocation and cached locally for every subsequent run.",
+      "homepage": "https://github.com/RandomCodeSpace/sonar-predict",
+      "license": "Apache-2.0",
+      "keywords": [
+        "code-quality",
+        "static-analysis",
+        "sonarsource",
+        "linter",
+        "quality-gate",
+        "offline"
+      ]
+    }
+  ]
+}

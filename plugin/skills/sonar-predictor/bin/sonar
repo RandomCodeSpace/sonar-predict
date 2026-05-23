@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Bootstrap wrapper for the sonar-predictor skill bundle.
+#
+# On first invocation, downloads the analyzer bundle (~150 MB) from Maven
+# Central into the user cache, verifies its SHA-1, and unpacks it. Every
+# subsequent call exec's the cached launcher directly — no network.
+#
+# Override the bundle location for air-gapped or pre-staged installs:
+#   SONAR_PREDICTOR_HOME=/path/to/extracted/sonar-predictor
+
+set -euo pipefail
+
+# Pinned to the bundle version published to Maven Central. Bumped in lockstep
+# with the plugin's release: each tagged plugin release publishes a matching
+# sonar-predictor-dist-<VERSION>.zip and updates this pin.
+#
+# Note: v0.1.2's dist artifact on Central is the (now-removed) plugin-bundle
+# shape, not the skill-bundle this wrapper expects. v0.1.1 is the last good
+# skill bundle; v0.1.3 onwards will be skill-shaped again.
+VERSION="0.1.1"
+
+GROUP_PATH="io/github/randomcodespace/sonarpredict"
+ARTIFACT="sonar-predictor-dist"
+BASE_URL="https://repo1.maven.org/maven2/${GROUP_PATH}/${ARTIFACT}/${VERSION}"
+
+if [ -n "${SONAR_PREDICTOR_HOME:-}" ]; then
+  SKILL_DIR="$SONAR_PREDICTOR_HOME"
+else
+  CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/sonar-predictor"
+  SKILL_DIR="$CACHE_ROOT/$VERSION"
+fi
+
+REAL_SONAR="$SKILL_DIR/bin/sonar"
+
+sha1_of() {
+  if command -v sha1sum >/dev/null 2>&1; then
+    sha1sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 1 "$1" | awk '{print $1}'
+  else
+    echo "sonar-predictor: no sha1sum or shasum found — cannot verify bundle" >&2
+    exit 2
+  fi
+}
+
+if [ ! -x "$REAL_SONAR" ]; then
+  for cmd in curl unzip; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "sonar-predictor: required command '$cmd' not found on PATH" >&2
+      exit 2
+    fi
+  done
+
+  echo "sonar-predictor: first run — downloading $VERSION bundle from Maven Central..." >&2
+  mkdir -p "$(dirname "$SKILL_DIR")"
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+
+  ZIP="$TMP/bundle.zip"
+  SHA="$TMP/bundle.zip.sha1"
+
+  curl -fsSL --retry 3 -o "$ZIP" "$BASE_URL/$ARTIFACT-$VERSION.zip"
+  curl -fsSL --retry 3 -o "$SHA" "$BASE_URL/$ARTIFACT-$VERSION.zip.sha1"
+
+  EXPECTED="$(awk '{print $1}' "$SHA")"
+  ACTUAL="$(sha1_of "$ZIP")"
+  if [ "$EXPECTED" != "$ACTUAL" ]; then
+    echo "sonar-predictor: SHA-1 verification failed (expected $EXPECTED, got $ACTUAL)" >&2
+    exit 2
+  fi
+
+  unzip -q "$ZIP" -d "$TMP/extracted"
+  if [ ! -d "$TMP/extracted/sonar-predictor" ]; then
+    echo "sonar-predictor: unexpected bundle layout (no sonar-predictor/ dir at zip root)" >&2
+    exit 2
+  fi
+
+  # If another invocation populated the cache while we were downloading,
+  # respect its work — atomically rename, ignoring failure on race.
+  mv "$TMP/extracted/sonar-predictor" "$SKILL_DIR" 2>/dev/null || true
+
+  if [ ! -x "$REAL_SONAR" ]; then
+    echo "sonar-predictor: bootstrap completed but $REAL_SONAR is not executable" >&2
+    exit 2
+  fi
+fi
+
+exec "$REAL_SONAR" "$@"
