@@ -45,7 +45,7 @@
             <directory>${project.basedir}/../.claude/agents</directory>
             <outputDirectory>agents</outputDirectory>
             <includes>
-                <include>sonar-scanner.md</include>
+                <include>sonar-scanner-claude.md</include>
             </includes>
         </fileSet>
         <fileSet>

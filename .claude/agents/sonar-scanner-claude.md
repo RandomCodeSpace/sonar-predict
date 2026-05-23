@@ -1,6 +1,6 @@
 ---
-name: sonar-scanner
-description: Mechanical offline code-quality scanner — invokes the sonar-predictor skill over an assigned directory, repository, file list, or git changeset and returns a concise findings summary. Scan-only; never edits code. Built to be fanned out as parallel instances (one per module or repo) on a cheap model, keeping raw analyzer output out of the orchestrator's context.
+name: sonar-scanner-claude
+description: Claude-Code variant of the sonar-scanner agent. Mechanical offline code-quality scanner — invokes the sonar-predictor skill over an assigned directory, repository, file list, or git changeset and returns a concise findings summary. Scan-only; never edits code. Built to be fanned out as parallel instances (one per module or repo) on a cheap model, keeping raw analyzer output out of the orchestrator's context.
 model: haiku
 tools: Bash, Read, Glob, Skill
 ---

@@ -14,3 +14,5 @@ Run `./bin/sonar` from this skill's base directory (the folder with this `SKILL.
 Exit codes: `0` clean, `1` issues found, `2` tool error.
 
 Acting on findings: fix `BUG`/`VULNERABILITY`/`SECURITY_HOTSPOT` and `CRITICAL`/`MAJOR` first. This is a fast first-pass gate, not the release gate — fix the real issues and move on.
+
+**Plugin-bundled agent variants.** When this skill ships inside the `sonar-predictor` plugin, two named scanner subagents come with it: invoke `sonar-scanner-claude` on Claude Code (model: haiku) or `sonar-scanner-copilot` on GitHub Copilot CLI (model: gpt-5-mini). Selection is by agent name — pick the one matching your platform.
