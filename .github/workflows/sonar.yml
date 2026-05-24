@@ -84,13 +84,11 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Project version: ${VERSION}"
 
-      # The actual self-scan. We override SONAR_PREDICTOR_HOME so the wrapper
-      # script picks up THIS branch's freshly-built daemon jar and analyzer
-      # plugins from the assembly's exploded staging directory, not whatever
-      # happens to be installed globally. One JaCoCo XML is passed in as
-      # coverage evidence (single module = one report). agent-scan writes
-      # JSON to .sonar-predictor/scan.json and prints a human summary on
-      # stdout; we want both.
+      # The actual self-scan. We point bin/sonar at THIS branch's
+      # freshly-built distribution under target/ (not whatever happens to
+      # be installed globally), and capture the scan as JSON to
+      # .sonar-predictor/scan.json via --save. One JaCoCo XML is passed
+      # in as coverage evidence (single module = one report).
       #
       # IMPORTANT: the CLI uses three-state exit codes
       #   0 = clean (no findings at the floor)
@@ -104,8 +102,10 @@ jobs:
         run: |
           set +e
           export SONAR_PREDICTOR_HOME="$(pwd)/target/sonar-predictor-dist-${{ steps.version.outputs.version }}/sonar-predictor"
-          "$SONAR_PREDICTOR_HOME/bin/sonar" agent-scan analyze . \
-            --coverage target/site/jacoco/jacoco.xml
+          mkdir -p .sonar-predictor
+          "$SONAR_PREDICTOR_HOME/bin/sonar" \
+            --format json --save .sonar-predictor/scan.json \
+            analyze . --coverage target/site/jacoco/jacoco.xml
           rc=$?
           set -e
           echo "Self-scan exit code: $rc (0=clean, 1=issues found, 2+=tool error)"

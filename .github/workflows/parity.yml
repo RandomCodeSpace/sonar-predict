@@ -114,8 +114,10 @@ jobs:
         run: |
           set +e
           export SONAR_PREDICTOR_HOME="$(pwd)/target/sonar-predictor-dist-${{ steps.version.outputs.version }}/sonar-predictor"
-          "$SONAR_PREDICTOR_HOME/bin/sonar" agent-scan analyze . \
-            --coverage target/site/jacoco/jacoco.xml
+          mkdir -p .sonar-predictor
+          "$SONAR_PREDICTOR_HOME/bin/sonar" \
+            --format json --save .sonar-predictor/scan.json \
+            analyze . --coverage target/site/jacoco/jacoco.xml
           rc=$?
           set -e
           echo "Self-scan exit code: $rc (0=clean, 1=issues found, 2+=tool error)"
