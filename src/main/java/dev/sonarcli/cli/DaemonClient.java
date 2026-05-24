@@ -157,9 +157,9 @@ public final class DaemonClient implements DaemonRpc {
 
     private WireMessage roundTrip(WireMessage request) throws IOException {
         try (SocketChannel channel =
-                SocketChannel.open(UnixDomainSocketAddress.of(paths.socket()))) {
-            OutputStream out = Channels.newOutputStream(channel);
-            InputStream in = Channels.newInputStream(channel);
+                     SocketChannel.open(UnixDomainSocketAddress.of(paths.socket()));
+             OutputStream out = Channels.newOutputStream(channel);
+             InputStream in = Channels.newInputStream(channel)) {
             MessageCodec.writeMessage(out, request);
             WireMessage response = MessageCodec.readMessage(in);
             if (!request.id().equals(response.id())) {
