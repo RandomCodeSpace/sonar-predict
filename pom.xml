@@ -297,7 +297,7 @@
                             <shadedClassifierName>cli</shadedClassifierName>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>dev.sonarcli.cli.SonarCommand</mainClass>
+                                    <mainClass>io.github.randomcodespace.sonarpredict.cli.SonarCommand</mainClass>
                                     <manifestEntries>
                                         <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
@@ -326,7 +326,7 @@
                             <shadedClassifierName>daemon</shadedClassifierName>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>dev.sonarcli.daemon.DaemonMain</mainClass>
+                                    <mainClass>io.github.randomcodespace.sonarpredict.daemon.DaemonMain</mainClass>
                                     <manifestEntries>
                                         <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
