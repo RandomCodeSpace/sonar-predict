@@ -105,7 +105,7 @@ public final class PluginRuntime {
                 V1_LANGUAGES,
                 false,
                 detectNodeVersion());
-        PluginsLoadResult result = new PluginsLoader().load(config, Set.of());
+        PluginsLoadResult result = new PluginsLoader().load(config, Set.of("sonarpredict-host"));
         return result.getLoadedPlugins();
     }
 
@@ -126,7 +126,7 @@ public final class PluginRuntime {
     public static Set<SonarLanguage> loadedLanguagesFor(Set<String> loadedPluginKeys) {
         Set<SonarLanguage> loaded = EnumSet.noneOf(SonarLanguage.class);
         for (SonarLanguage language : V1_LANGUAGES) {
-            if (loadedPluginKeys.contains(language.getPluginKey())) {
+            if (loadedPluginKeys.contains(language.getPlugin().getKey())) {
                 loaded.add(language);
             }
         }
