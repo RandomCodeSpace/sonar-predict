@@ -312,11 +312,17 @@ public final class DaemonLauncher {
     private static Path findDevDefaultJar() {
         Path dir = Path.of("").toAbsolutePath();
         while (dir != null) {
-            Path target = dir.resolve("daemon").resolve("target");
-            if (Files.isDirectory(target)) {
-                Path jar = newestDaemonJar(target);
-                if (jar != null) {
-                    return jar;
+            // Single-module layout: target/sonar-predictor-daemon-*.jar at the
+            // project root. Legacy multi-module: daemon/target/... — try both
+            // so a checkout of either generation still resolves.
+            for (Path candidate : new Path[] {
+                    dir.resolve("target"),
+                    dir.resolve("daemon").resolve("target") }) {
+                if (Files.isDirectory(candidate)) {
+                    Path jar = newestDaemonJar(candidate);
+                    if (jar != null) {
+                        return jar;
+                    }
                 }
             }
             dir = dir.getParent();

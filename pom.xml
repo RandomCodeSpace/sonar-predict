@@ -162,6 +162,26 @@
             </plugin>
 
             <!--
+              Bind the primary jar to process-classes (instead of the default
+              package phase). The shade executions below run in
+              process-test-classes (before test), and they consume the primary
+              jar — both must produce their output before the test phase fires,
+              so DaemonLauncher tests can find a real daemon jar on disk.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>process-classes</phase>
+                        <goals><goal>jar</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
               JaCoCo instrumentation + XML report. Single module → one
               coverage report at target/site/jacoco/jacoco.xml. That XML
               feeds the scanner's coverage import flag; see README for the
@@ -263,7 +283,7 @@
                 <executions>
                     <execution>
                         <id>shade-cli</id>
-                        <phase>package</phase>
+                        <phase>process-test-classes</phase>
                         <goals><goal>shade</goal></goals>
                         <configuration>
                             <!-- finalName drives the on-disk filename
@@ -272,7 +292,7 @@
                                  (sonar-predictor-<version>-cli.jar on Central).
                                  The two are independent; the assembly picks the
                                  on-disk file up by literal name. -->
-                            <finalName>sonar-predictor-cli</finalName>
+                            <finalName>sonar-predictor-cli-${project.version}</finalName>
                             <shadedArtifactAttached>true</shadedArtifactAttached>
                             <shadedClassifierName>cli</shadedClassifierName>
                             <transformers>
@@ -298,10 +318,10 @@
                     </execution>
                     <execution>
                         <id>shade-daemon</id>
-                        <phase>package</phase>
+                        <phase>process-test-classes</phase>
                         <goals><goal>shade</goal></goals>
                         <configuration>
-                            <finalName>sonar-predictor-daemon</finalName>
+                            <finalName>sonar-predictor-daemon-${project.version}</finalName>
                             <shadedArtifactAttached>true</shadedArtifactAttached>
                             <shadedClassifierName>daemon</shadedClassifierName>
                             <transformers>

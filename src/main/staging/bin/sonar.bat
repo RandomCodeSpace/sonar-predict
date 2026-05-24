@@ -14,10 +14,22 @@ rem yet verified.
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "BUNDLE_DIR=%%~fI"
 
-set "CLI_JAR=%BUNDLE_DIR%\lib\sonar-predictor-cli.jar"
-set "DAEMON_JAR=%BUNDLE_DIR%\lib\sonar-predictor-daemon.jar"
+rem The shaded jars carry a version suffix (sonar-predictor-cli-X.Y.Z.jar).
+rem Glob and pick the first match so the launcher stays version-agnostic.
+set "CLI_JAR="
+for %%F in ("%BUNDLE_DIR%\lib\sonar-predictor-cli-*.jar") do (
+    if not defined CLI_JAR set "CLI_JAR=%%~fF"
+)
+set "DAEMON_JAR="
+for %%F in ("%BUNDLE_DIR%\lib\sonar-predictor-daemon-*.jar") do (
+    if not defined DAEMON_JAR set "DAEMON_JAR=%%~fF"
+)
 set "PLUGINS_DIR=%BUNDLE_DIR%\plugins"
 
+if not defined CLI_JAR (
+    echo sonar-predictor: no sonar-predictor-cli-*.jar found in %BUNDLE_DIR%\lib - the distribution bundle is incomplete. 1>&2
+    exit /b 2
+)
 if not exist "%CLI_JAR%" (
     echo sonar-predictor: missing %CLI_JAR% - the distribution bundle is incomplete. 1>&2
     exit /b 2

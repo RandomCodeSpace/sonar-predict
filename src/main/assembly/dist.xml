@@ -51,16 +51,21 @@
         </fileSet>
 
         <!-- The two shaded fat jars produced by maven-shade-plugin's
-             shade-cli + shade-daemon executions. With shade finalName=sonar-predictor,
-             their literal target/ filenames are already sonar-predictor-cli.jar
-             and sonar-predictor-daemon.jar — the names the launcher expects. -->
+             shade-cli + shade-daemon executions. Their on-disk names are
+             sonar-predictor-{cli,daemon}-<version>.jar; the launcher
+             scripts (bin/sonar, bin/sonar.bat) glob lib/sonar-predictor-cli-*.jar
+             and lib/sonar-predictor-daemon-*.jar to find them. Exclude the
+             unshaded original-*.jar shade also leaves behind. -->
         <fileSet>
             <directory>${project.build.directory}</directory>
             <outputDirectory>lib</outputDirectory>
             <includes>
-                <include>sonar-predictor-cli.jar</include>
-                <include>sonar-predictor-daemon.jar</include>
+                <include>sonar-predictor-cli-*.jar</include>
+                <include>sonar-predictor-daemon-*.jar</include>
             </includes>
+            <excludes>
+                <exclude>original-*.jar</exclude>
+            </excludes>
         </fileSet>
     </fileSets>
 </assembly>
