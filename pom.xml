@@ -196,6 +196,27 @@
                         <phase>process-classes</phase>
                         <goals><goal>jar</goal></goals>
                     </execution>
+                    <execution>
+                        <id>host-plugin-jar</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>jar</goal></goals>
+                        <configuration>
+                            <classifier>host</classifier>
+                            <includes>
+                                <include>io/github/randomcodespace/sonarpredict/hostplugin/**</include>
+                            </includes>
+                            <archive>
+                                <manifestEntries>
+                                    <Plugin-Class>io.github.randomcodespace.sonarpredict.hostplugin.SonarPredictHostPlugin</Plugin-Class>
+                                    <Plugin-Key>sonarpredict-host</Plugin-Key>
+                                    <Plugin-Name>Sonar Predictor Host</Plugin-Name>
+                                    <Plugin-Version>${project.version}</Plugin-Version>
+                                    <Sonar-Version>9.9</Sonar-Version>
+                                    <SonarLint-Supported>true</SonarLint-Supported>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 
