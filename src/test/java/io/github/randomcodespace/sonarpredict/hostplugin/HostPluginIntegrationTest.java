@@ -2,33 +2,20 @@ package io.github.randomcodespace.sonarpredict.hostplugin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
+import io.github.randomcodespace.sonarpredict.daemon.EngineLog;
 import io.github.randomcodespace.sonarpredict.daemon.PluginRuntime;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.slf4j.LoggerFactory;
 import org.sonarsource.sonarlint.core.plugin.commons.LoadedPlugins;
 
 class HostPluginIntegrationTest {
 
     @TempDir
     Path tempPluginsDir;
-
-    private ListAppender<ILoggingEvent> appender;
-
-    @BeforeEach
-    void setUp() {
-        appender = new ListAppender<>();
-        appender.start();
-        ((Logger) LoggerFactory.getLogger("ROOT")).addAppender(appender);
-    }
 
     @Test
     void loadAll_includesHostPluginAndNoMissingBeanErrors() throws IOException {
@@ -37,9 +24,13 @@ class HostPluginIntegrationTest {
         LoadedPlugins loaded = PluginRuntime.loadAll(tempPluginsDir);
 
         assertThat(loaded.getAllPluginInstancesByKeys()).containsKey("sonarpredict-host");
-        assertThat(appender.list).noneMatch(e ->
-                e.getFormattedMessage() != null
-                && e.getFormattedMessage().contains("NoSuchBeanDefinitionException"));
+
+        // PluginRuntime.loadAll installed a fresh EngineLog as the global
+        // SonarLint log target before loading; inspect its captured messages
+        // for the missing-bean error that signaled the original wall.
+        EngineLog engineLog = EngineLog.current();
+        assertThat(engineLog).isNotNull();
+        assertThat(engineLog.messages()).noneMatch(m -> m.contains("NoSuchBeanDefinitionException"));
     }
 
     /**

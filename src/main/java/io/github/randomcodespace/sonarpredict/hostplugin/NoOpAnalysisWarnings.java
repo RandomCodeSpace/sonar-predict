@@ -21,14 +21,23 @@ import org.sonarsource.api.sonarlint.SonarLintSide;
 @SonarLintSide(lifespan = SonarLintSide.SINGLE_ANALYSIS)
 public final class NoOpAnalysisWarnings implements AnalysisWarnings {
 
-    private static final Logger LOG = LoggerFactory.getLogger(NoOpAnalysisWarnings.class);
+    private static final Logger DEFAULT_LOG = LoggerFactory.getLogger(NoOpAnalysisWarnings.class);
+
+    /**
+     * The logger this instance writes through. Package-private and non-final
+     * so tests can substitute a Mockito-mocked {@link Logger} without
+     * pulling logback onto the test classpath (Socket Security flags
+     * logback's class files as {@code obfuscatedFile}; we keep our
+     * dependency surface clean by mocking the slf4j API directly).
+     */
+    Logger log = DEFAULT_LOG;
 
     private final Set<String> seen = ConcurrentHashMap.newKeySet();
 
     @Override
     public void addUnique(String message) {
         if (seen.add(message)) {
-            LOG.warn("[sonar] {}", message);
+            log.warn("[sonar] {}", message);
         }
     }
 }

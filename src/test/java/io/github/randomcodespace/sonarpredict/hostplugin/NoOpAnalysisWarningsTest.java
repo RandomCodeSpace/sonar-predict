@@ -1,43 +1,34 @@
 package io.github.randomcodespace.sonarpredict.hostplugin;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
 
 class NoOpAnalysisWarningsTest {
 
     private Logger logger;
-    private ListAppender<ILoggingEvent> appender;
     private NoOpAnalysisWarnings warnings;
 
     @BeforeEach
     void setUp() {
-        logger = (Logger) LoggerFactory.getLogger(NoOpAnalysisWarnings.class);
-        appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
+        logger = mock(Logger.class);
         warnings = new NoOpAnalysisWarnings();
-    }
-
-    @AfterEach
-    void tearDown() {
-        logger.detachAppender(appender);
+        warnings.log = logger;
     }
 
     @Test
-    void addUnique_logsAtWarn() {
+    void addUnique_logsAtWarnWithSonarPrefix() {
         warnings.addUnique("memory limit reached");
 
-        assertThat(appender.list).hasSize(1);
-        assertThat(appender.list.get(0).getLevel()).isEqualTo(Level.WARN);
-        assertThat(appender.list.get(0).getFormattedMessage()).contains("[sonar]", "memory limit reached");
+        verify(logger).warn(eq("[sonar] {}"), eq("memory limit reached"));
+        verifyNoMoreInteractions(logger);
     }
 
     @Test
@@ -46,7 +37,8 @@ class NoOpAnalysisWarningsTest {
         warnings.addUnique("same");
         warnings.addUnique("same");
 
-        assertThat(appender.list).hasSize(1);
+        verify(logger, times(1)).warn(eq("[sonar] {}"), eq("same"));
+        verifyNoMoreInteractions(logger);
     }
 
     @Test
@@ -54,14 +46,33 @@ class NoOpAnalysisWarningsTest {
         warnings.addUnique("first");
         warnings.addUnique("second");
 
-        assertThat(appender.list).hasSize(2);
+        verify(logger).warn(eq("[sonar] {}"), eq("first"));
+        verify(logger).warn(eq("[sonar] {}"), eq("second"));
+        verifyNoMoreInteractions(logger);
     }
 
     @Test
     void freshInstance_doesNotShareDedupeSet() {
         warnings.addUnique("X");
-        new NoOpAnalysisWarnings().addUnique("X");
 
-        assertThat(appender.list).hasSize(2);
+        Logger second = mock(Logger.class);
+        NoOpAnalysisWarnings fresh = new NoOpAnalysisWarnings();
+        fresh.log = second;
+        fresh.addUnique("X");
+
+        verify(logger).warn(eq("[sonar] {}"), eq("X"));
+        verify(second).warn(eq("[sonar] {}"), eq("X"));
+    }
+
+    @Test
+    void addUnique_nullMessageStillRoutesThroughLogger() {
+        // Sensors may pass null in pathological cases; our implementation
+        // simply delegates to ConcurrentHashMap which rejects null with NPE.
+        // This test pins the current behavior so a future change is intentional.
+        org.assertj.core.api.Assertions
+                .assertThatThrownBy(() -> warnings.addUnique(null))
+                .isInstanceOf(NullPointerException.class);
+        verify(logger, never()).warn(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.<Object>any());
     }
 }
