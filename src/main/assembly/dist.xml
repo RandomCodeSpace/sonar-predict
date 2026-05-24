@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>dist</id>
+
+    <!--
+      Distribution bundle. Produced at:
+        target/sonar-predictor-dist-${project.version}.zip   (zip format)
+        target/sonar-predictor-dist-${project.version}/      (exploded dir)
+      Top-level dir inside both is sonar-predictor/ — the layout users
+      extract and run from. Self-scan workflows set
+        SONAR_PREDICTOR_HOME=target/sonar-predictor-dist-<v>/sonar-predictor
+      and invoke $SONAR_PREDICTOR_HOME/bin/sonar.
+    -->
+    <formats>
+        <format>zip</format>
+        <format>dir</format>
+    </formats>
+
+    <baseDirectory>sonar-predictor</baseDirectory>
+    <includeBaseDirectory>true</includeBaseDirectory>
+
+    <fileSets>
+        <!-- Launchers. sonar made executable, sonar.bat for Windows. -->
+        <fileSet>
+            <directory>${project.basedir}/src/main/staging/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>sonar</include>
+            </includes>
+            <fileMode>0755</fileMode>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/staging/bin</directory>
+            <outputDirectory>bin</outputDirectory>
+            <includes>
+                <include>sonar.bat</include>
+            </includes>
+            <fileMode>0644</fileMode>
+        </fileSet>
+
+        <!-- The 10 analyzer plugins, fetched by maven-dependency-plugin's
+             copy-analyzer-plugins-for-dist execution. -->
+        <fileSet>
+            <directory>${project.build.directory}/plugins</directory>
+            <outputDirectory>plugins</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+        </fileSet>
+
+        <!-- The two shaded fat jars produced by maven-shade-plugin's
+             shade-cli + shade-daemon executions. Their on-disk names are
+             sonar-predictor-{cli,daemon}-<version>.jar; the launcher
+             scripts (bin/sonar, bin/sonar.bat) glob lib/sonar-predictor-cli-*.jar
+             and lib/sonar-predictor-daemon-*.jar to find them. Exclude the
+             unshaded original-*.jar shade also leaves behind. -->
+        <fileSet>
+            <directory>${project.build.directory}</directory>
+            <outputDirectory>lib</outputDirectory>
+            <includes>
+                <include>sonar-predictor-cli-*.jar</include>
+                <include>sonar-predictor-daemon-*.jar</include>
+            </includes>
+            <excludes>
+                <exclude>original-*.jar</exclude>
+            </excludes>
+        </fileSet>
+    </fileSets>
+</assembly>

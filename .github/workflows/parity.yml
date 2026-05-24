@@ -3,11 +3,9 @@ name: Scan parity (self-scan ↔ SonarQube Cloud)
 # Runs BOTH scans on the same commit and diffs their issue lists. Every PR
 # answers: "does our daemon find what SonarSource's own pipeline finds?".
 #
-# This workflow supersedes .github/workflows/sonarqube-cloud.yml — that file
-# was removed in the same commit; the Cloud scan now happens here, alongside
-# the self-scan and the parity comparison. The standalone self-scan
-# (sonar.yml) is kept because it works on fork PRs (no SONAR_TOKEN needed),
-# whereas this one requires the token and so skips for forks.
+# The standalone self-scan (sonar.yml) is kept because it works on fork PRs
+# (no SONAR_TOKEN needed), whereas this one requires the token and so skips
+# for forks.
 #
 # Setup required (one-time, by the repo admin):
 #   1. Sign in to https://sonarcloud.io with the repo's GitHub org.
@@ -41,8 +39,9 @@ jobs:
     # self-scan workflow still gates fork PRs on our daemon's findings.
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     env:
-      # Same dist-assembly heap concern as sonar.yml — 2 GB to keep the
-      # 150 MB skill-bundle zip step from OOMing maven-assembly-plugin.
+      # The assembly step packages the ~150 MB distribution bundle (CLI +
+      # daemon fat jars + 10 analyzer plugins). 2 GB heap keeps maven-assembly-plugin
+      # from OOMing while it zips the bundle.
       MAVEN_OPTS: -Xmx2g
     steps:
       - name: Checkout
@@ -89,24 +88,36 @@ jobs:
           fi
           echo "SONAR_TOKEN configured."
 
-      # Single build that both scans then consume. `verify` also produces
-      # the per-module JaCoCo XMLs that both scans use as coverage evidence.
-      - name: Build and test (generates JaCoCo XML)
-        run: mvn -B -ntp -pl '!dist' verify -Dsurefire.failIfNoSpecifiedTests=false
+      # Single build that both scans then consume. `verify` produces the
+      # JaCoCo XML that both scans use as coverage evidence, plus the
+      # distribution bundle the self-scan invokes via its bin/sonar launcher.
+      - name: Build and test (generates JaCoCo XML + distribution bundle)
+        run: mvn -B -ntp clean verify -Dsurefire.failIfNoSpecifiedTests=false
 
-      - name: Build dist (skill bundle for self-scan)
-        run: mvn -B -ntp -pl dist -am package -DskipTests
+      # Derive the project version from pom.xml so SONAR_PREDICTOR_HOME below
+      # tracks pom bumps without anyone touching CI.
+      - name: Derive project version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION=$(mvn -B -ntp -q -DforceStdout help:evaluate -Dexpression=project.version)
+          if [ -z "${VERSION}" ]; then
+            echo "::error::could not derive project.version from pom.xml"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Project version: ${VERSION}"
 
       # --- (A) Self-scan ------------------------------------------------------
 
       - name: Run self-scan
         run: |
           set +e
-          export SONAR_PREDICTOR_HOME="$(pwd)/dist/target/skill/sonar-predictor"
-          ./plugin/skills/sonar-predictor/bin/sonar agent-scan analyze . \
-            --coverage protocol/target/site/jacoco/jacoco.xml \
-            --coverage daemon/target/site/jacoco/jacoco.xml \
-            --coverage cli/target/site/jacoco/jacoco.xml
+          export SONAR_PREDICTOR_HOME="$(pwd)/target/sonar-predictor-dist-${{ steps.version.outputs.version }}/sonar-predictor"
+          mkdir -p .sonar-predictor
+          "$SONAR_PREDICTOR_HOME/bin/sonar" \
+            --format json --save .sonar-predictor/scan.json \
+            analyze . --coverage target/site/jacoco/jacoco.xml
           rc=$?
           set -e
           echo "Self-scan exit code: $rc (0=clean, 1=issues found, 2+=tool error)"
@@ -122,13 +133,13 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mvn -B -ntp -pl '!dist' \
+          mvn -B -ntp \
               org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
               -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
               -Dsonar.organization="${SONAR_ORGANIZATION}" \
               -Dsonar.host.url="${SONAR_HOST_URL}" \
               -Dsonar.qualitygate.wait=false \
-              -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml,../protocol/target/site/jacoco/jacoco.xml,../daemon/target/site/jacoco/jacoco.xml,../cli/target/site/jacoco/jacoco.xml
+              -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
 
       # SonarQube Cloud processes the scan asynchronously after upload. Poll
       # the last completed analysis until the timestamp moves past the start

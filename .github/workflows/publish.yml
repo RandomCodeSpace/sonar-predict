@@ -4,17 +4,17 @@ name: Publish to Maven Central + GitHub Release
 # from the Actions tab with an explicit version.
 #
 # On a run it:
-#   1. derives the release version from the tag (v0.1.0 -> 0.1.0) — Maven
+#   1. derives the release version from the tag (v0.2.0 -> 0.2.0) — Maven
 #      Central rejects -SNAPSHOT, so versions:set strips it,
-#   2. builds, tests, GPG-signs and deploys protocol/daemon/cli to Maven
-#      Central via the Sonatype Central Portal (the dist module sets
-#      maven.deploy.skip=true so it is built but never staged),
-#   3. creates a GitHub Release carrying two bundles: a whole-repo source
-#      zip (git archive of HEAD) and the assembled skill bundle zip. The
-#      plugin itself is installed via the in-repo /plugin/ directory through
-#      Claude Code's / Copilot CLI's marketplace (see /.claude-plugin/
-#      marketplace.json); its skill launcher downloads the analyzer bundle
-#      on first run from the Maven Central artifact this workflow publishes.
+#   2. builds, tests, GPG-signs and deploys the parent pom + attached source
+#      zip + attached distribution zip to Maven Central via the Sonatype
+#      Central Portal. This is a single-module project with packaging=pom;
+#      its deploy attaches: parent pom + source zip (classifier=src) + dist
+#      zip (classifier=dist). No daemon/cli JARs are published to Central,
+#      3. creates a GitHub Release carrying two assets: a whole-repo source
+#      zip (git archive of HEAD) and the assembled distribution bundle
+#      (sonar-predictor-dist-<version>.zip — bin/sonar{,.bat} + lib/*.jar +
+#      plugins/*.jar). Users install by downloading + extracting the zip.
 #
 # Required repo secrets:
 #   OSS_NEXUS_USER         - Sonatype Central Portal token username
@@ -30,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 0.1.0) — required for manual runs'
+        description: 'Release version (e.g. 0.2.0) — required for manual runs'
         required: true
         type: string
 
@@ -75,7 +75,7 @@ jobs:
           if [ -n "${INPUT_VERSION:-}" ]; then
             VERSION="${INPUT_VERSION}"
           else
-            # github.ref_name is the tag, e.g. v0.1.0 -> 0.1.0
+            # github.ref_name is the tag, e.g. v0.2.0 -> 0.2.0
             VERSION="${GITHUB_REF_NAME#v}"
           fi
           if [ -z "${VERSION}" ]; then
@@ -91,18 +91,6 @@ jobs:
           mvn -B -ntp versions:set \
             -DnewVersion="${{ steps.version.outputs.version }}" \
             -DgenerateBackupPoms=false
-
-      - name: Sync skill bundle version pin to the release version
-        # The skill launcher reads SONAR_BUNDLE_VERSION from config.env to
-        # decide which sonar-predictor-dist-<version>.zip to fetch from
-        # Maven Central on first invocation. If config.env is stale, an
-        # installed plugin downloads the wrong bundle. Forcing the pin to
-        # match the tag here removes that trap from every future release.
-        run: |
-          set -euo pipefail
-          CONFIG=plugin/skills/sonar-predictor/config.env
-          sed -i "s|^SONAR_BUNDLE_VERSION=.*|SONAR_BUNDLE_VERSION=${{ steps.version.outputs.version }}|" "${CONFIG}"
-          grep '^SONAR_BUNDLE_VERSION' "${CONFIG}"
 
       - name: Build the source bundle (whole-repo git archive of HEAD)
         # Built BEFORE the deploy: the release profile's build-helper plugin
@@ -124,21 +112,7 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
-          mvn -B -ntp -Prelease deploy
-
-      - name: Locate the skill bundle zip
-        id: bundle
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
-          SKILL_ZIP="dist/target/sonar-predict-skill-${VERSION}.zip"
-          if [ ! -f "${SKILL_ZIP}" ]; then
-            echo "::error::skill bundle not found at ${SKILL_ZIP}"
-            ls -la dist/target || true
-            exit 1
-          fi
-          echo "skill_zip=${SKILL_ZIP}" >> "$GITHUB_OUTPUT"
-          echo "Skill bundle: ${SKILL_ZIP}"
+          mvn -B -ntp -Prelease clean deploy
 
       - name: Create the GitHub Release
         env:
@@ -147,14 +121,19 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           SRC_ZIP="sonar-predict-${VERSION}-src.zip"
-          SKILL_ZIP="${{ steps.bundle.outputs.skill_zip }}"
+          DIST_ZIP="target/sonar-predictor-dist-${VERSION}.zip"
+          if [ ! -f "${DIST_ZIP}" ]; then
+            echo "::error::distribution bundle not found at ${DIST_ZIP}"
+            ls -la target || true
+            exit 1
+          fi
           if [ -n "${GITHUB_REF_NAME:-}" ] && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
           else
             TAG="v${VERSION}"
           fi
           gh release create "${TAG}" \
-            --title "sonar-predict ${VERSION}" \
+            --title "sonar-predictor ${VERSION}" \
             --generate-notes \
             "${SRC_ZIP}" \
-            "${SKILL_ZIP}"
+            "${DIST_ZIP}"
