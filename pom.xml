@@ -54,9 +54,15 @@
     </issueManagement>
 
     <properties>
-        <maven.compiler.release>17</maven.compiler.release>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <!--
+          Java 21 minimum: sonarlint-analysis-engine 11.3.0.85510 (LTA 2026.1)
+          ships class files at major version 65 (Java 21). Compiling against
+          it requires a JDK 21+ toolchain. CI's setup-java step is pinned to
+          21 in .github/workflows/*.yml to match.
+        -->
+        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <jackson.version>2.17.2</jackson.version>

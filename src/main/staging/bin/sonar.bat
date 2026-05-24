@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 rem sonar-predictor launcher (Windows) — self-contained distribution entry point.
 rem
-rem Auto-discovers a Java 17+ runtime so no JAVA_HOME / PATH setup is required,
+rem Auto-discovers a Java 21+ runtime so no JAVA_HOME / PATH setup is required,
 rem then runs the bundled CLI with the bundle's jar/plugin locations passed in.
 rem
 rem TODO(windows): the daemon's IPC uses a Unix domain socket path; full
@@ -76,16 +76,16 @@ if not defined JAVA (
 )
 
 if not defined JAVA (
-    echo sonar-predictor needs Java 17+; none found. 1>&2
+    echo sonar-predictor needs Java 21+; none found. 1>&2
     echo Checked: %%JAVA_HOME%%, PATH, and common install locations. 1>&2
-    echo Install a JDK/JRE 17 or newer, or set JAVA_HOME to one. 1>&2
+    echo Install a JDK/JRE 21 or newer, or set JAVA_HOME to one. 1>&2
     exit /b 2
 )
 
 "%JAVA%" "-Dsonar.java.exe=%JAVA%" "-Dsonar.daemon.jar=%DAEMON_JAR%" "-Dsonar.plugins.dir=%PLUGINS_DIR%" -jar "%CLI_JAR%" %*
 exit /b %ERRORLEVEL%
 
-rem --- :checkJava <java.exe>  -> errorlevel 0 if major version >= 17 ----------
+rem --- :checkJava <java.exe>  -> errorlevel 0 if major version >= 21 ----------
 :checkJava
 set "_JV="
 for /f "tokens=3" %%v in ('"%~1" -version 2^>^&1 ^| findstr /i "version"') do (
@@ -97,4 +97,4 @@ for /f "tokens=1,2 delims=." %%a in ("%_JV%") do (
     if "%%a"=="1" ( set "_MAJOR=%%b" ) else ( set "_MAJOR=%%a" )
 )
 if not defined _MAJOR exit /b 1
-if %_MAJOR% GEQ 17 ( exit /b 0 ) else ( exit /b 1 )
+if %_MAJOR% GEQ 21 ( exit /b 0 ) else ( exit /b 1 )

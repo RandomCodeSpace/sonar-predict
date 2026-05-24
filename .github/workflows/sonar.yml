@@ -39,12 +39,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      # JDK 17 is the project's build/runtime target. Temurin is the safe default.
-      - name: Set up JDK 17
+      # JDK 21 is the project's build/runtime target (required by
+      # sonarlint-analysis-engine 11.x / LTA 2026.1). Temurin is the safe default.
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       # The JS/TS analyzer plugin spawns Node at runtime to lint JS/TS sources,
       # so Node must be on PATH when the scan runs (not just at build time).

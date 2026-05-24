@@ -1,11 +1,11 @@
 #!/bin/sh
 # sonar-predictor launcher — self-contained distribution entry point.
 #
-# Auto-discovers a Java 17+ runtime so neither the agent nor the user has to
+# Auto-discovers a Java 21+ runtime so neither the agent nor the user has to
 # set JAVA_HOME or put a compatible java on PATH. Then runs the bundled CLI,
 # passing it the discovered java and the bundle's jar/plugin locations:
 #
-#   -Dsonar.java.exe     the Java 17+ executable (used to spawn the daemon)
+#   -Dsonar.java.exe     the Java 21+ executable (used to spawn the daemon)
 #   -Dsonar.daemon.jar   lib/sonar-predictor-daemon.jar
 #   -Dsonar.plugins.dir  plugins/  (the 10 SonarSource analyzer jars)
 #
@@ -41,9 +41,10 @@ if [ -z "$CLI_JAR" ] || [ ! -f "$CLI_JAR" ]; then
     exit 2
 fi
 
-# --- Java 17+ discovery -----------------------------------------------------
-# Returns 0 and prints nothing if the given java is >= 17; non-zero otherwise.
-MIN_MAJOR=17
+# --- Java 21+ discovery -----------------------------------------------------
+# Returns 0 and prints nothing if the given java is >= 21; non-zero otherwise.
+# (sonarlint-analysis-engine 11.x / LTA 2026.1 ships Java 21 class files.)
+MIN_MAJOR=21
 
 java_major() {
     # Print the major version of the java executable in $1, or nothing.
@@ -60,7 +61,7 @@ java_major() {
     esac
 }
 
-is_java_17_plus() {
+is_java_min_plus() {
     _m=$(java_major "$1" 2>/dev/null) || return 1
     [ -n "$_m" ] || return 1
     [ "$_m" -ge "$MIN_MAJOR" ] 2>/dev/null || return 1
@@ -70,14 +71,14 @@ is_java_17_plus() {
 JAVA=""
 
 # 1. $JAVA_HOME/bin/java
-if [ -n "${JAVA_HOME:-}" ] && is_java_17_plus "$JAVA_HOME/bin/java"; then
+if [ -n "${JAVA_HOME:-}" ] && is_java_min_plus "$JAVA_HOME/bin/java"; then
     JAVA="$JAVA_HOME/bin/java"
 fi
 
 # 2. java on PATH
 if [ -z "$JAVA" ]; then
     _path_java=$(command -v java 2>/dev/null || true)
-    if [ -n "$_path_java" ] && is_java_17_plus "$_path_java"; then
+    if [ -n "$_path_java" ] && is_java_min_plus "$_path_java"; then
         JAVA="$_path_java"
     fi
 fi
@@ -93,7 +94,7 @@ if [ -z "$JAVA" ]; then
         /opt/*/bin/java
     do
         [ -x "$_cand" ] || continue
-        if is_java_17_plus "$_cand"; then
+        if is_java_min_plus "$_cand"; then
             JAVA="$_cand"
             break
         fi
@@ -101,9 +102,9 @@ if [ -z "$JAVA" ]; then
 fi
 
 if [ -z "$JAVA" ]; then
-    echo "sonar-predictor needs Java 17+; none found." >&2
+    echo "sonar-predictor needs Java 21+; none found." >&2
     echo "Checked: \$JAVA_HOME, PATH, and common install locations." >&2
-    echo "Install a JDK/JRE 17 or newer, or set JAVA_HOME to one." >&2
+    echo "Install a JDK/JRE 21 or newer, or set JAVA_HOME to one." >&2
     exit 2
 fi
 
