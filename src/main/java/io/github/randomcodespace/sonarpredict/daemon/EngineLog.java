@@ -2,6 +2,7 @@ package io.github.randomcodespace.sonarpredict.daemon;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.sonarsource.sonarlint.core.commons.log.LogOutput;
 import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
@@ -21,7 +22,7 @@ import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
  */
 public final class EngineLog implements LogOutput {
 
-    private static volatile EngineLog current;
+    private static final AtomicReference<EngineLog> CURRENT = new AtomicReference<>();
 
     private final List<String> messages = new CopyOnWriteArrayList<>();
 
@@ -49,7 +50,7 @@ public final class EngineLog implements LogOutput {
     public static EngineLog installAndCapture() {
         EngineLog target = new EngineLog();
         SonarLintLogger.get().setTarget(target);
-        current = target;
+        CURRENT.set(target);
         return target;
     }
 
@@ -61,7 +62,7 @@ public final class EngineLog implements LogOutput {
      * internally without exposing the reference.
      */
     public static EngineLog current() {
-        return current;
+        return CURRENT.get();
     }
 
     @Override
