@@ -61,6 +61,19 @@
 
         <jackson.version>2.17.2</jackson.version>
         <junit.version>5.10.2</junit.version>
+        <!--
+          These versions track SonarQube Server 2026.1 LTA (released 2025-12-11).
+
+          To upgrade to a future LTA:
+            1. Look up the new LTA's bundled analyzer versions in the release
+               notes at https://docs.sonarsource.com/sonarqube-server/&lt;v&gt;/setup-and-upgrade/release-upgrade-notes/
+            2. Bump all 11 version properties below.
+            3. Run `mvn clean test` — the daemon test suite is the canary.
+            4. If a NEW required host bean appears (NoSuchBeanDefinitionException
+               on a type other than AnalysisWarnings), add an @SonarLintSide no-op
+               class in src/main/java/.../hostplugin/ and one context.addExtension(...)
+               line in SonarPredictHostPlugin.define(). See spec §7.2 for details.
+        -->
         <sonarlint.engine.version>11.3.0.85510</sonarlint.engine.version>
         <picocli.version>4.7.7</picocli.version>
 
