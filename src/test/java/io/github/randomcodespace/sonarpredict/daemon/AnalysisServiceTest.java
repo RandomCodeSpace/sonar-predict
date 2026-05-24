@@ -562,7 +562,7 @@ class AnalysisServiceTest {
             for (String key : languages) {
                 var lang = org.sonarsource.sonarlint.core.commons.api.SonarLanguage
                         .forKey(key).orElseThrow();
-                assertTrue(loadedKeys.contains(lang.getPluginKey()),
+                assertTrue(loadedKeys.contains(lang.getPlugin().getKey()),
                         "reported language '" + key + "' must have a loaded plugin");
             }
         }

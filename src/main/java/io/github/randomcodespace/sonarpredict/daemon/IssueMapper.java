@@ -41,7 +41,7 @@ public final class IssueMapper {
     public static io.github.randomcodespace.sonarpredict.protocol.dto.Issue toDto(
             Issue engineIssue, Path baseDir, RuleCatalog catalog) {
         return map(
-                engineIssue.getRuleKey(),
+                engineIssue.getRuleKey().toString(),
                 resolveFilePath(engineIssue.getInputFile(), baseDir),
                 engineIssue.getTextRange(),
                 engineIssue.getMessage(),
