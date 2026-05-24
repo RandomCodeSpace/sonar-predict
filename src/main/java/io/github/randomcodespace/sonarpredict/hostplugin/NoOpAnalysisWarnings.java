@@ -12,10 +12,13 @@ import org.sonarsource.api.sonarlint.SonarLintSide;
  * Spring-autowire. Engine 11.3 ships zero references to {@code AnalysisWarnings}, so the
  * host plugin provides this bean.
  *
- * <p>Lifespan is {@code INSTANCE} (per-analysis) — the engine instantiates a fresh
- * instance per analysis, which resets the dedupe set automatically.
+ * <p>Lifespan is {@code SINGLE_ANALYSIS} — maps to {@code ContainerLifespan.ANALYSIS}
+ * in the engine. The per-analysis {@code AnalysisContainer} calls
+ * {@code install(ContainerLifespan.ANALYSIS)}, so this bean is registered into the
+ * same Spring container that wires sensors such as {@code HtmlSensor} which declare
+ * {@code AnalysisWarnings} as a constructor parameter.
  */
-@SonarLintSide(lifespan = SonarLintSide.INSTANCE)
+@SonarLintSide(lifespan = SonarLintSide.SINGLE_ANALYSIS)
 public final class NoOpAnalysisWarnings implements AnalysisWarnings {
 
     private static final Logger LOG = LoggerFactory.getLogger(NoOpAnalysisWarnings.class);

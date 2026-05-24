@@ -211,7 +211,7 @@
                     </execution>
                     <execution>
                         <id>host-plugin-jar</id>
-                        <phase>prepare-package</phase>
+                        <phase>process-test-classes</phase>
                         <goals><goal>jar</goal></goals>
                         <configuration>
                             <classifier>host</classifier>
@@ -395,6 +395,42 @@
                                     </excludes>
                                 </filter>
                             </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              Copy the host plugin jar into the dev plugins/ directory so
+              that AnalysisService (no-arg constructor → plugins/) and
+              PluginRuntime.loadAll pick it up during mvn test.
+
+              The host-plugin-jar jar-plugin execution (process-test-classes)
+              produces target/sonar-predictor-${project.version}-host.jar.
+              This antrun execution binds to the SAME phase so it runs
+              immediately after the jar is written.
+
+              The file is gitignored (plugins/*.jar). In production the host
+              jar ships inside the dist zip's plugins/ directory via the
+              assembly descriptor, so no separate production step is needed.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-host-plugin-for-tests</id>
+                        <phase>process-test-classes</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <copy todir="${project.basedir}/plugins" overwrite="true">
+                                    <fileset dir="${project.build.directory}">
+                                        <include name="${project.artifactId}-${project.version}-host.jar"/>
+                                    </fileset>
+                                </copy>
+                            </target>
                         </configuration>
                     </execution>
                 </executions>

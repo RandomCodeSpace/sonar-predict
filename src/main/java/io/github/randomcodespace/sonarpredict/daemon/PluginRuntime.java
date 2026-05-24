@@ -105,7 +105,13 @@ public final class PluginRuntime {
                 V1_LANGUAGES,
                 false,
                 detectNodeVersion());
-        PluginsLoadResult result = new PluginsLoader().load(config, Set.of("sonarpredict-host"));
+        // Second argument is disabledPluginsForAnalysis — keys in this set are excluded
+        // from getAnalysisPluginInstancesByKeys() and therefore never installed into any
+        // Spring analysis container. Pass an empty set so the host plugin's extensions
+        // (NoOpAnalysisWarnings) are visible to sensors such as HtmlSensor that autowire
+        // AnalysisWarnings. The engine's own "additionalAllowedPlugins" list (textdeveloper,
+        // textenterprise, etc.) is built internally by PluginsLoader and is separate.
+        PluginsLoadResult result = new PluginsLoader().load(config, Set.of());
         return result.getLoadedPlugins();
     }
 
