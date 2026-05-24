@@ -9,8 +9,9 @@ permissions:
 # passes through the same gate, so the bar we apply to others applies to us.
 #
 # We deliberately do NOT use the previously released bundle from Maven Central.
-# SONAR_PREDICTOR_HOME is repointed at dist/target/skill/sonar-predictor so the
-# scan exercises the branch's analyzer code, not yesterday's release.
+# SONAR_PREDICTOR_HOME is repointed at the freshly-built exploded distribution
+# under target/ so the scan exercises this branch's analyzer code, not
+# yesterday's release.
 
 on:
   pull_request:
@@ -24,11 +25,11 @@ jobs:
     name: Self-scan
     runs-on: ubuntu-latest
     env:
-      # The dist-assembly step packages the ~150 MB skill bundle (CLI + daemon
-      # fat jars + 10 analyzer plugins). Maven's default heap is too small for
-      # that on ubuntu-latest — we'd get 'Execution exception: Java heap space'
-      # from maven-assembly-plugin:single. 2 GB is plenty and well under the
-      # runner's ~7 GB available memory.
+      # The assembly step packages the ~150 MB distribution bundle (CLI +
+      # daemon fat jars + 10 analyzer plugins). Maven's default heap is too
+      # small for that on ubuntu-latest — we'd get 'Execution exception:
+      # Java heap space' from maven-assembly-plugin:single. 2 GB is plenty
+      # and well under the runner's ~7 GB available memory.
       MAVEN_OPTS: -Xmx2g
     steps:
       # fetch-depth: 0 keeps the full history available so we can switch to
@@ -52,9 +53,9 @@ jobs:
         with:
           node-version: '20'
 
-      # Cache the local Maven repo across runs. Keyed on every pom.xml in the
-      # tree so a dependency change invalidates cleanly; restore-keys lets a
-      # partial cache hit still seed most of ~/.m2.
+      # Cache the local Maven repo across runs. Keyed on the pom.xml so a
+      # dependency change invalidates cleanly; restore-keys lets a partial
+      # cache hit still seed most of ~/.m2.
       - name: Cache Maven repository
         uses: actions/cache@v4
         with:
@@ -63,26 +64,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # Build + test the whole reactor except `dist` (the bundle module is
-      # packaged separately below). `verify` runs the integration tests AND
-      # produces the JaCoCo XML reports we feed back into the scan as coverage
-      # evidence. failIfNoSpecifiedTests=false keeps modules with no tests
-      # from breaking the reactor.
-      - name: Build and test (generates JaCoCo XML reports)
-        run: mvn -B -ntp -pl '!dist' verify -Dsurefire.failIfNoSpecifiedTests=false
+      # Single-module build. `verify` runs the integration tests AND produces
+      # the JaCoCo XML report we feed back into the scan as coverage evidence,
+      # plus the distribution bundle the self-scan invokes below.
+      - name: Build and test (generates JaCoCo XML + distribution bundle)
+        run: mvn -B -ntp -Dmaven.test.skip=false clean verify -Dsurefire.failIfNoSpecifiedTests=false
 
-      # Now build the skill bundle. -am pulls in upstream modules if they
-      # weren't already installed by the previous step. -DskipTests because
-      # the tests already ran — re-running them here just wastes minutes.
-      - name: Build dist (skill bundle this scan will use)
-        run: mvn -B -ntp -pl dist -am package -DskipTests
+      # Derive the project version from pom.xml so SONAR_PREDICTOR_HOME below
+      # tracks pom bumps without anyone touching CI.
+      - name: Derive project version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION=$(mvn -B -ntp -q -DforceStdout help:evaluate -Dexpression=project.version)
+          if [ -z "${VERSION}" ]; then
+            echo "::error::could not derive project.version from pom.xml"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Project version: ${VERSION}"
 
       # The actual self-scan. We override SONAR_PREDICTOR_HOME so the wrapper
       # script picks up THIS branch's freshly-built daemon jar and analyzer
-      # plugins, not whatever happens to be installed globally. Three JaCoCo
-      # XMLs are passed in as coverage evidence — one per Java module that
-      # produces coverage. agent-scan writes JSON to .sonar-predictor/scan.json
-      # and prints a human summary on stdout; we want both.
+      # plugins from the assembly's exploded staging directory, not whatever
+      # happens to be installed globally. One JaCoCo XML is passed in as
+      # coverage evidence (single module = one report). agent-scan writes
+      # JSON to .sonar-predictor/scan.json and prints a human summary on
+      # stdout; we want both.
       #
       # IMPORTANT: the CLI uses three-state exit codes
       #   0 = clean (no findings at the floor)
@@ -95,11 +103,9 @@ jobs:
       - name: Run self-scan
         run: |
           set +e
-          export SONAR_PREDICTOR_HOME="$(pwd)/dist/target/skill/sonar-predictor"
-          ./plugin/skills/sonar-predictor/bin/sonar agent-scan analyze . \
-            --coverage protocol/target/site/jacoco/jacoco.xml \
-            --coverage daemon/target/site/jacoco/jacoco.xml \
-            --coverage cli/target/site/jacoco/jacoco.xml
+          export SONAR_PREDICTOR_HOME="$(pwd)/target/sonar-predictor-dist-${{ steps.version.outputs.version }}/sonar-predictor"
+          "$SONAR_PREDICTOR_HOME/bin/sonar" agent-scan analyze . \
+            --coverage target/site/jacoco/jacoco.xml
           rc=$?
           set -e
           echo "Self-scan exit code: $rc (0=clean, 1=issues found, 2+=tool error)"

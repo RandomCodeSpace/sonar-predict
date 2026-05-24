@@ -1,0 +1,107 @@
+#!/bin/sh
+# sonar-predictor launcher — self-contained distribution entry point.
+#
+# Auto-discovers a Java 17+ runtime so neither the agent nor the user has to
+# set JAVA_HOME or put a compatible java on PATH. Then runs the bundled CLI,
+# passing it the discovered java and the bundle's jar/plugin locations:
+#
+#   -Dsonar.java.exe     the Java 17+ executable (used to spawn the daemon)
+#   -Dsonar.daemon.jar   lib/sonar-predictor-daemon.jar
+#   -Dsonar.plugins.dir  plugins/  (the 10 SonarSource analyzer jars)
+#
+# POSIX sh — no bashisms.
+set -eu
+
+# --- Resolve this script's own directory (the bundle's bin/), following symlinks.
+SCRIPT="$0"
+while [ -h "$SCRIPT" ]; do
+    LINK=$(readlink "$SCRIPT")
+    case "$LINK" in
+        /*) SCRIPT="$LINK" ;;
+        *)  SCRIPT="$(dirname "$SCRIPT")/$LINK" ;;
+    esac
+done
+BIN_DIR=$(cd "$(dirname "$SCRIPT")" && pwd)
+BUNDLE_DIR=$(cd "$BIN_DIR/.." && pwd)
+
+CLI_JAR="$BUNDLE_DIR/lib/sonar-predictor-cli.jar"
+DAEMON_JAR="$BUNDLE_DIR/lib/sonar-predictor-daemon.jar"
+PLUGINS_DIR="$BUNDLE_DIR/plugins"
+
+if [ ! -f "$CLI_JAR" ]; then
+    echo "sonar-predictor: missing $CLI_JAR — the distribution bundle is incomplete." >&2
+    exit 2
+fi
+
+# --- Java 17+ discovery -----------------------------------------------------
+# Returns 0 and prints nothing if the given java is >= 17; non-zero otherwise.
+MIN_MAJOR=17
+
+java_major() {
+    # Print the major version of the java executable in $1, or nothing.
+    _j="$1"
+    [ -x "$_j" ] || return 1
+    # `java -version` writes to stderr; lines look like:
+    #   openjdk version "17.0.10" 2024-01-16
+    #   java version "1.8.0_392"
+    _v=$("$_j" -version 2>&1 | head -n 1 | sed -e 's/.*version "//' -e 's/".*//')
+    [ -n "$_v" ] || return 1
+    case "$_v" in
+        1.*) echo "$_v" | cut -d. -f2 ;;   # legacy 1.8 -> 8
+        *)   echo "$_v" | cut -d. -f1 ;;   # 17.0.10  -> 17
+    esac
+}
+
+is_java_17_plus() {
+    _m=$(java_major "$1" 2>/dev/null) || return 1
+    [ -n "$_m" ] || return 1
+    [ "$_m" -ge "$MIN_MAJOR" ] 2>/dev/null || return 1
+    return 0
+}
+
+JAVA=""
+
+# 1. $JAVA_HOME/bin/java
+if [ -n "${JAVA_HOME:-}" ] && is_java_17_plus "$JAVA_HOME/bin/java"; then
+    JAVA="$JAVA_HOME/bin/java"
+fi
+
+# 2. java on PATH
+if [ -z "$JAVA" ]; then
+    _path_java=$(command -v java 2>/dev/null || true)
+    if [ -n "$_path_java" ] && is_java_17_plus "$_path_java"; then
+        JAVA="$_path_java"
+    fi
+fi
+
+# 3. common install locations
+if [ -z "$JAVA" ]; then
+    for _cand in \
+        /usr/lib/jvm/*/bin/java \
+        /usr/java/*/bin/java \
+        /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/java \
+        "${HOME:-/nonexistent}"/.sdkman/candidates/java/*/bin/java \
+        /opt/java/*/bin/java \
+        /opt/*/bin/java
+    do
+        [ -x "$_cand" ] || continue
+        if is_java_17_plus "$_cand"; then
+            JAVA="$_cand"
+            break
+        fi
+    done
+fi
+
+if [ -z "$JAVA" ]; then
+    echo "sonar-predictor needs Java 17+; none found." >&2
+    echo "Checked: \$JAVA_HOME, PATH, and common install locations." >&2
+    echo "Install a JDK/JRE 17 or newer, or set JAVA_HOME to one." >&2
+    exit 2
+fi
+
+# --- Run the CLI ------------------------------------------------------------
+exec "$JAVA" \
+    "-Dsonar.java.exe=$JAVA" \
+    "-Dsonar.daemon.jar=$DAEMON_JAR" \
+    "-Dsonar.plugins.dir=$PLUGINS_DIR" \
+    -jar "$CLI_JAR" "$@"

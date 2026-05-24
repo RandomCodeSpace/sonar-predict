@@ -5,13 +5,23 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.github.randomcodespace.sonarpredict</groupId>
-    <artifactId>sonar-predictor-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
-    <packaging>pom</packaging>
+    <artifactId>sonar-predictor</artifactId>
+    <version>0.2.0-SNAPSHOT</version>
+    <!--
+      Packaging is jar so the default Maven lifecycle binds compile, test,
+      and jar plugins automatically. The "primary" jar this produces is
+      our compiled classes only (~200 KB). The two RUNNABLE fat jars
+      come from the maven-shade-plugin executions below, attached as
+      classified artifacts (sonar-predictor-X.Y.Z-cli.jar /
+      sonar-predictor-X.Y.Z-daemon.jar). Both are copied into the dist
+      zip's lib/ directory by the assembly.
+    -->
+    <packaging>jar</packaging>
     <name>sonar-predictor</name>
-    <description>SonarSource-powered code analysis predictor: a daemon + CLI that
-        runs the SonarLint analysis engine locally and is distributed as a
-        self-contained Claude Code agent skill.</description>
+    <description>Offline, no-server, pre-push code-quality gate. Embeds the genuine
+        SonarSource analyzers (SonarLint engine + 10 language plugins) and runs them
+        locally. Ships as a single distribution zip with launchers, fat jars and
+        analyzer plugins.</description>
     <url>https://github.com/RandomCodeSpace/sonar-predict</url>
     <inceptionYear>2026</inceptionYear>
 
@@ -43,16 +53,12 @@
         <url>https://github.com/RandomCodeSpace/sonar-predict/issues</url>
     </issueManagement>
 
-    <modules>
-        <module>protocol</module>
-        <module>daemon</module>
-        <module>cli</module>
-        <module>dist</module>
-    </modules>
-
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
         <jackson.version>2.17.2</jackson.version>
         <junit.version>5.10.2</junit.version>
         <sonarlint.engine.version>10.24.0.81415</sonarlint.engine.version>
@@ -60,9 +66,9 @@
 
         <!--
           The 10 SonarSource analyzer plugins — the runtime assets the daemon
-          loads. Single source of truth for the `dist` module, which fetches
-          them through Maven (so settings.xml mirrors / Nexus / proxy apply).
-          Versions match the engine generation 10.24.0.81415.
+          loads. Single source of truth for the maven-dependency-plugin copy
+          executions below, which fetch them through Maven (so settings.xml
+          mirrors / Nexus / proxy apply). Versions match engine 10.24.0.81415.
         -->
         <sonar.plugin.java.version>8.15.0.39343</sonar.plugin.java.version>
         <sonar.plugin.python.version>5.5.0.23291</sonar.plugin.python.version>
@@ -103,6 +109,28 @@
         </dependencies>
     </dependencyManagement>
 
+    <dependencies>
+        <!-- Union of external dependencies from the former protocol, daemon,
+             and cli modules. Inter-module deps are gone in single-module land. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.sonarsource.sonarlint.core</groupId>
+            <artifactId>sonarlint-analysis-engine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
     <build>
         <pluginManagement>
             <plugins>
@@ -127,13 +155,18 @@
             </plugins>
         </pluginManagement>
 
-        <!--
-          JaCoCo instrumentation + XML report. Inherited by every child
-          module so `mvn verify` produces <module>/target/site/jacoco/jacoco.xml.
-          Those XMLs feed the scanner's coverage import flag; see the
-          project README for the canonical invocation.
-        -->
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+
+            <!--
+              JaCoCo instrumentation + XML report. Single module → one
+              coverage report at target/site/jacoco/jacoco.xml. That XML
+              feeds the scanner's coverage import flag; see README for the
+              canonical invocation.
+            -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -149,6 +182,174 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!--
+              Fetch the 10 analyzer plugin jars through Maven. Two executions:
+
+              1. process-test-resources → ${project.basedir}/plugins
+                 RuleCatalog / PluginRuntime / SonarWayProfiles load analyzers
+                 from that directory; jars are gitignored, so a clean checkout
+                 (CI) has none until this populates them BEFORE tests run.
+
+              2. prepare-package → ${project.build.directory}/plugins
+                 The assembly descriptor pulls these into the dist zip's
+                 plugins/ directory.
+
+              Resolution goes through Maven both times, so settings.xml mirrors
+              / Nexus / proxy all apply — no hardcoded download URLs, works
+              behind corporate firewalls.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-analyzer-plugins-for-tests</id>
+                        <phase>process-test-resources</phase>
+                        <goals><goal>copy</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.basedir}/plugins</outputDirectory>
+                            <stripVersion>false</stripVersion>
+                            <artifactItems>
+                                <artifactItem><groupId>org.sonarsource.java</groupId><artifactId>sonar-java-plugin</artifactId><version>${sonar.plugin.java.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.python</groupId><artifactId>sonar-python-plugin</artifactId><version>${sonar.plugin.python.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.javascript</groupId><artifactId>sonar-javascript-plugin</artifactId><version>${sonar.plugin.javascript.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.php</groupId><artifactId>sonar-php-plugin</artifactId><version>${sonar.plugin.php.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.kotlin</groupId><artifactId>sonar-kotlin-plugin</artifactId><version>${sonar.plugin.kotlin.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.slang</groupId><artifactId>sonar-go-plugin</artifactId><version>${sonar.plugin.go.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.slang</groupId><artifactId>sonar-ruby-plugin</artifactId><version>${sonar.plugin.ruby.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.slang</groupId><artifactId>sonar-scala-plugin</artifactId><version>${sonar.plugin.scala.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.html</groupId><artifactId>sonar-html-plugin</artifactId><version>${sonar.plugin.html.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.xml</groupId><artifactId>sonar-xml-plugin</artifactId><version>${sonar.plugin.xml.version}</version><type>jar</type></artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>copy-analyzer-plugins-for-dist</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>copy</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/plugins</outputDirectory>
+                            <stripVersion>false</stripVersion>
+                            <artifactItems>
+                                <artifactItem><groupId>org.sonarsource.java</groupId><artifactId>sonar-java-plugin</artifactId><version>${sonar.plugin.java.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.python</groupId><artifactId>sonar-python-plugin</artifactId><version>${sonar.plugin.python.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.javascript</groupId><artifactId>sonar-javascript-plugin</artifactId><version>${sonar.plugin.javascript.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.php</groupId><artifactId>sonar-php-plugin</artifactId><version>${sonar.plugin.php.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.kotlin</groupId><artifactId>sonar-kotlin-plugin</artifactId><version>${sonar.plugin.kotlin.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.slang</groupId><artifactId>sonar-go-plugin</artifactId><version>${sonar.plugin.go.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.slang</groupId><artifactId>sonar-ruby-plugin</artifactId><version>${sonar.plugin.ruby.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.slang</groupId><artifactId>sonar-scala-plugin</artifactId><version>${sonar.plugin.scala.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.html</groupId><artifactId>sonar-html-plugin</artifactId><version>${sonar.plugin.html.version}</version><type>jar</type></artifactItem>
+                                <artifactItem><groupId>org.sonarsource.xml</groupId><artifactId>sonar-xml-plugin</artifactId><version>${sonar.plugin.xml.version}</version><type>jar</type></artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              Two shade executions, one per launchable entry point. Each
+              produces a classified, attached fat jar — packaging=pom keeps
+              the default jar plugin off (no primary jar), so neither shaded
+              artifact becomes the project's primary artifact. Both jars are
+              copied into the dist zip's lib/ directory by the assembly.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.3</version>
+                <executions>
+                    <execution>
+                        <id>shade-cli</id>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <!-- finalName drives the on-disk filename
+                                 (target/<finalName>.jar). shadedClassifierName
+                                 drives the deployed-artifact classifier
+                                 (sonar-predictor-<version>-cli.jar on Central).
+                                 The two are independent; the assembly picks the
+                                 on-disk file up by literal name. -->
+                            <finalName>sonar-predictor-cli</finalName>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>cli</shadedClassifierName>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>dev.sonarcli.cli.SonarCommand</mainClass>
+                                    <manifestEntries>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>shade-daemon</id>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <finalName>sonar-predictor-daemon</finalName>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>daemon</shadedClassifierName>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>dev.sonarcli.daemon.DaemonMain</mainClass>
+                                    <manifestEntries>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Assemble the dist bundle: bin/ launchers + lib/ fat jars +
+                 plugins/ analyzer jars, zipped. Output:
+                 target/sonar-predictor-dist-${project.version}.zip. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.7.1</version>
+                <executions>
+                    <execution>
+                        <id>build-dist-zip</id>
+                        <phase>package</phase>
+                        <goals><goal>single</goal></goals>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <finalName>sonar-predictor-dist-${project.version}</finalName>
+                            <descriptors>
+                                <descriptor>src/main/assembly/dist.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -156,15 +357,18 @@
         <!--
           Maven Central publishing. Active only for the release build
           (`mvn -Prelease deploy`), which runs in CI on a `v*` tag.
-          It attaches sources + javadoc jars, GPG-signs every artifact,
-          and uploads protocol/daemon/cli through the Sonatype Central
-          Portal. The `dist` module sets maven.deploy.skip=true, so it is
-          built but never staged for Central.
+          packaging=pom keeps source/javadoc Central requirements off the
+          primary artifact; we attach only the source zip + dist zip below.
+          GPG signs every attached artifact, then central-publishing-maven-plugin
+          uploads through the Sonatype Central Portal.
         -->
         <profile>
             <id>release</id>
             <build>
                 <plugins>
+                    <!-- Maven Central requires source + javadoc jars for jar
+                         packaging. doclint=none keeps a release from breaking on
+                         missing @return tags. -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-source-plugin</artifactId>
@@ -173,9 +377,7 @@
                             <execution>
                                 <id>attach-sources</id>
                                 <phase>package</phase>
-                                <goals>
-                                    <goal>jar-no-fork</goal>
-                                </goals>
+                                <goals><goal>jar-no-fork</goal></goals>
                             </execution>
                         </executions>
                     </plugin>
@@ -185,9 +387,6 @@
                         <artifactId>maven-javadoc-plugin</artifactId>
                         <version>3.10.1</version>
                         <configuration>
-                            <!-- Produce the Central-required javadoc jar
-                                 without failing the release on doc-quality
-                                 lint (missing @return etc.). -->
                             <doclint>none</doclint>
                             <failOnError>false</failOnError>
                         </configuration>
@@ -195,9 +394,7 @@
                             <execution>
                                 <id>attach-javadoc</id>
                                 <phase>package</phase>
-                                <goals>
-                                    <goal>jar</goal>
-                                </goals>
+                                <goals><goal>jar</goal></goals>
                             </execution>
                         </executions>
                     </plugin>
@@ -210,9 +407,7 @@
                             <execution>
                                 <id>sign-artifacts</id>
                                 <phase>verify</phase>
-                                <goals>
-                                    <goal>sign</goal>
-                                </goals>
+                                <goals><goal>sign</goal></goals>
                             </execution>
                         </executions>
                     </plugin>
@@ -230,32 +425,31 @@
                     </plugin>
 
                     <!--
-                      Attach the whole-repo source zip (a git archive of HEAD,
-                      produced by the publish workflow before `deploy`) to the
-                      parent coordinate. Every release therefore also ships
-                      io.github.randomcodespace.sonarpredict:sonar-predictor-parent:<version>:zip:src
-                      to Maven Central, GPG-signed like every other artifact.
-                      Because this lives in the `release` profile + the publish
-                      workflow, it happens on every release automatically.
+                      Attach the dist zip (sonar-predictor-dist-${version}.zip)
+                      and the whole-repo source zip (sonar-predict-${version}-src.zip,
+                      produced by the publish workflow before `deploy` via
+                      git archive) to the project coordinate.
+
+                      Both ship on Maven Central, GPG-signed like every other
+                      artifact. classifier=dist for the bundle and classifier=src
+                      for the source zip.
                     -->
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>build-helper-maven-plugin</artifactId>
                         <version>3.6.0</version>
-                        <!-- Parent-only: a parent <build><plugins> entry is
-                             inherited by every child module, but the src zip
-                             lives at the repo root (= the parent basedir).
-                             Without this, children would try to attach a
-                             non-existent <module>/sonar-predict-*-src.zip and
-                             gpg:sign would fail on the ghost file. -->
-                        <inherited>false</inherited>
                         <executions>
                             <execution>
-                                <id>attach-source-zip</id>
+                                <id>attach-deploy-artifacts</id>
                                 <phase>package</phase>
                                 <goals><goal>attach-artifact</goal></goals>
                                 <configuration>
                                     <artifacts>
+                                        <artifact>
+                                            <file>${project.build.directory}/sonar-predictor-dist-${project.version}.zip</file>
+                                            <type>zip</type>
+                                            <classifier>dist</classifier>
+                                        </artifact>
                                         <artifact>
                                             <file>${project.basedir}/sonar-predict-${project.version}-src.zip</file>
                                             <type>zip</type>
