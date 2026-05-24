@@ -50,6 +50,17 @@
             </includes>
         </fileSet>
 
+        <!-- The host plugin JAR produced by the host-plugin-jar maven-jar-plugin
+             execution. Ships alongside the 10 analyzer JARs in plugins/ so the
+             daemon's PluginRuntime.loadAll picks it up via the *.jar glob. -->
+        <fileSet>
+            <directory>${project.build.directory}</directory>
+            <outputDirectory>plugins</outputDirectory>
+            <includes>
+                <include>sonar-predictor-*-host.jar</include>
+            </includes>
+        </fileSet>
+
         <!-- The two shaded fat jars produced by maven-shade-plugin's
              shade-cli + shade-daemon executions. Their on-disk names are
              sonar-predictor-{cli,daemon}-<version>.jar; the launcher

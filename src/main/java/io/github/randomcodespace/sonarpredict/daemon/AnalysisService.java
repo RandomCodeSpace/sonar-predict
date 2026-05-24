@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.sonarsource.sonarlint.core.analysis.AnalysisScheduler;
-import org.sonarsource.sonarlint.core.analysis.api.ActiveRule;
+import org.sonar.api.batch.rule.ActiveRule;
 import org.sonarsource.sonarlint.core.analysis.api.AnalysisConfiguration;
 import org.sonarsource.sonarlint.core.analysis.api.AnalysisResults;
 import org.sonarsource.sonarlint.core.analysis.api.AnalysisSchedulerConfiguration;
@@ -510,12 +510,8 @@ public final class AnalysisService implements AutoCloseable {
             }
             String languageKey = language.getSonarLanguageKey();
             for (String ruleKey : ruleKeys) {
-                ActiveRule activeRule = new ActiveRule(ruleKey, languageKey);
                 Map<String, String> params = paramDefaults.paramsFor(ruleKey);
-                if (!params.isEmpty()) {
-                    activeRule.setParams(params);
-                }
-                rules.add(activeRule);
+                rules.add(SimpleActiveRule.of(ruleKey, languageKey, params));
             }
         }
         return rules;
@@ -622,14 +618,10 @@ public final class AnalysisService implements AutoCloseable {
             }
             // The analyzer-registered parameter defaults are the baseline; the
             // profile's own <parameters> override them where it sets a value.
-            ActiveRule active = new ActiveRule(rule.ruleKey(), languageKey);
             Map<String, String> params =
                     new java.util.HashMap<>(ruleParameterDefaults.paramsFor(rule.ruleKey()));
             params.putAll(rule.parameters());
-            if (!params.isEmpty()) {
-                active.setParams(Map.copyOf(params));
-            }
-            rules.add(active);
+            rules.add(SimpleActiveRule.of(rule.ruleKey(), languageKey, params));
         }
         return rules;
     }

@@ -105,6 +105,12 @@ public final class PluginRuntime {
                 V1_LANGUAGES,
                 false,
                 detectNodeVersion());
+        // Second argument is disabledPluginsForAnalysis — keys in this set are excluded
+        // from getAnalysisPluginInstancesByKeys() and therefore never installed into any
+        // Spring analysis container. Pass an empty set so the host plugin's extensions
+        // (NoOpAnalysisWarnings) are visible to sensors such as HtmlSensor that autowire
+        // AnalysisWarnings. The engine's own "additionalAllowedPlugins" list (textdeveloper,
+        // textenterprise, etc.) is built internally by PluginsLoader and is separate.
         PluginsLoadResult result = new PluginsLoader().load(config, Set.of());
         return result.getLoadedPlugins();
     }
@@ -126,7 +132,7 @@ public final class PluginRuntime {
     public static Set<SonarLanguage> loadedLanguagesFor(Set<String> loadedPluginKeys) {
         Set<SonarLanguage> loaded = EnumSet.noneOf(SonarLanguage.class);
         for (SonarLanguage language : V1_LANGUAGES) {
-            if (loadedPluginKeys.contains(language.getPluginKey())) {
+            if (loadedPluginKeys.contains(language.getPlugin().getKey())) {
                 loaded.add(language);
             }
         }

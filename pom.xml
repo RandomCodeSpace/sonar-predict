@@ -54,32 +54,51 @@
     </issueManagement>
 
     <properties>
-        <maven.compiler.release>17</maven.compiler.release>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <!--
+          Java 21 minimum: sonarlint-analysis-engine 11.3.0.85510 (LTA 2026.1)
+          ships class files at major version 65 (Java 21). Compiling against
+          it requires a JDK 21+ toolchain. CI's setup-java step is pinned to
+          21 in .github/workflows/*.yml to match.
+        -->
+        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <jackson.version>2.17.2</jackson.version>
         <junit.version>5.10.2</junit.version>
-        <sonarlint.engine.version>10.24.0.81415</sonarlint.engine.version>
+        <!--
+          These versions track SonarQube Server 2026.1 LTA (released 2025-12-11).
+
+          To upgrade to a future LTA:
+            1. Look up the new LTA's bundled analyzer versions in the release
+               notes at https://docs.sonarsource.com/sonarqube-server/&lt;v&gt;/setup-and-upgrade/release-upgrade-notes/
+            2. Bump all 11 version properties below.
+            3. Run `mvn clean test` — the daemon test suite is the canary.
+            4. If a NEW required host bean appears (NoSuchBeanDefinitionException
+               on a type other than AnalysisWarnings), add an @SonarLintSide no-op
+               class in src/main/java/.../hostplugin/ and one context.addExtension(...)
+               line in SonarPredictHostPlugin.define(). See spec §7.2 for details.
+        -->
+        <sonarlint.engine.version>11.3.0.85510</sonarlint.engine.version>
         <picocli.version>4.7.7</picocli.version>
 
         <!--
           The 10 SonarSource analyzer plugins — the runtime assets the daemon
           loads. Single source of truth for the maven-dependency-plugin copy
           executions below, which fetch them through Maven (so settings.xml
-          mirrors / Nexus / proxy apply). Versions match engine 10.24.0.81415.
+          mirrors / Nexus / proxy apply). Versions match engine 11.3.0.85510 (LTA 2026.1).
         -->
-        <sonar.plugin.java.version>8.15.0.39343</sonar.plugin.java.version>
-        <sonar.plugin.python.version>5.5.0.23291</sonar.plugin.python.version>
-        <sonar.plugin.javascript.version>10.24.0.33043</sonar.plugin.javascript.version>
-        <sonar.plugin.php.version>3.46.0.13151</sonar.plugin.php.version>
-        <sonar.plugin.kotlin.version>3.2.0.7239</sonar.plugin.kotlin.version>
+        <sonar.plugin.java.version>8.29.0.43460</sonar.plugin.java.version>
+        <sonar.plugin.python.version>5.22.0.33216</sonar.plugin.python.version>
+        <sonar.plugin.javascript.version>12.5.0.41048</sonar.plugin.javascript.version>
+        <sonar.plugin.php.version>3.57.0.15976</sonar.plugin.php.version>
+        <sonar.plugin.kotlin.version>3.6.0.9326</sonar.plugin.kotlin.version>
         <sonar.plugin.go.version>1.18.1.827</sonar.plugin.go.version>
-        <sonar.plugin.ruby.version>1.19.0.471</sonar.plugin.ruby.version>
-        <sonar.plugin.scala.version>1.19.0.484</sonar.plugin.scala.version>
-        <sonar.plugin.html.version>3.19.0.5695</sonar.plugin.html.version>
-        <sonar.plugin.xml.version>2.13.0.5938</sonar.plugin.xml.version>
+        <sonar.plugin.ruby.version>1.22.0.1992</sonar.plugin.ruby.version>
+        <sonar.plugin.scala.version>1.23.0.2394</sonar.plugin.scala.version>
+        <sonar.plugin.html.version>3.27.0.7699</sonar.plugin.html.version>
+        <sonar.plugin.xml.version>2.17.0.7895</sonar.plugin.xml.version>
     </properties>
 
     <dependencyManagement>
@@ -127,6 +146,18 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.15.2</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -177,6 +208,27 @@
                         <id>default-jar</id>
                         <phase>process-classes</phase>
                         <goals><goal>jar</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>host-plugin-jar</id>
+                        <phase>process-test-classes</phase>
+                        <goals><goal>jar</goal></goals>
+                        <configuration>
+                            <classifier>host</classifier>
+                            <includes>
+                                <include>io/github/randomcodespace/sonarpredict/hostplugin/**</include>
+                            </includes>
+                            <archive>
+                                <manifestEntries>
+                                    <Plugin-Class>io.github.randomcodespace.sonarpredict.hostplugin.SonarPredictHostPlugin</Plugin-Class>
+                                    <Plugin-Key>sonarpredict-host</Plugin-Key>
+                                    <Plugin-Name>Sonar Predictor Host</Plugin-Name>
+                                    <Plugin-Version>${project.version}</Plugin-Version>
+                                    <Sonar-Version>9.9</Sonar-Version>
+                                    <SonarLint-Supported>true</SonarLint-Supported>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -343,6 +395,42 @@
                                     </excludes>
                                 </filter>
                             </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              Copy the host plugin jar into the dev plugins/ directory so
+              that AnalysisService (no-arg constructor → plugins/) and
+              PluginRuntime.loadAll pick it up during mvn test.
+
+              The host-plugin-jar jar-plugin execution (process-test-classes)
+              produces target/sonar-predictor-${project.version}-host.jar.
+              This antrun execution binds to the SAME phase so it runs
+              immediately after the jar is written.
+
+              The file is gitignored (plugins/*.jar). In production the host
+              jar ships inside the dist zip's plugins/ directory via the
+              assembly descriptor, so no separate production step is needed.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-host-plugin-for-tests</id>
+                        <phase>process-test-classes</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <copy todir="${project.basedir}/plugins" overwrite="true">
+                                    <fileset dir="${project.build.directory}">
+                                        <include name="${project.artifactId}-${project.version}-host.jar"/>
+                                    </fileset>
+                                </copy>
+                            </target>
                         </configuration>
                     </execution>
                 </executions>

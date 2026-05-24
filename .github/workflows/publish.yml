@@ -50,11 +50,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 17 + GPG
+      - name: Set up JDK 21 + GPG
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           server-id: central
           server-username: OSS_NEXUS_USER
           server-password: OSS_NEXUS_PASS

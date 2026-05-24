@@ -2,6 +2,7 @@ package io.github.randomcodespace.sonarpredict.daemon;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.sonarsource.sonarlint.core.commons.log.LogOutput;
 import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
@@ -20,6 +21,8 @@ import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
  * tests.
  */
 public final class EngineLog implements LogOutput {
+
+    private static final AtomicReference<EngineLog> CURRENT = new AtomicReference<>();
 
     private final List<String> messages = new CopyOnWriteArrayList<>();
 
@@ -47,7 +50,19 @@ public final class EngineLog implements LogOutput {
     public static EngineLog installAndCapture() {
         EngineLog target = new EngineLog();
         SonarLintLogger.get().setTarget(target);
+        CURRENT.set(target);
         return target;
+    }
+
+    /**
+     * Returns the most recently {@link #install installed} {@code EngineLog},
+     * or {@code null} if none has been installed yet. Tests use this to assert
+     * on engine messages emitted by code paths (such as
+     * {@code PluginRuntime.loadAll}) that install their own {@code EngineLog}
+     * internally without exposing the reference.
+     */
+    public static EngineLog current() {
+        return CURRENT.get();
     }
 
     @Override

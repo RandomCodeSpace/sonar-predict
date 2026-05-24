@@ -98,7 +98,7 @@ The JSON output carries both fields on every issue.
 
 | Requirement | For |
 |---|---|
-| **Java 17+** (JDK or JRE) | running the CLI and daemon — auto-discovered (`JAVA_HOME` → `PATH` → common install locations) |
+| **Java 21+** (JDK or JRE) | running the CLI and daemon — auto-discovered (`JAVA_HOME` → `PATH` → common install locations) |
 | **Linux or macOS** | the daemon uses Unix domain sockets (Windows support is on the roadmap) |
 | **`git`** | the `check --diff` workflow |
 | **Node.js 18.17+** | JavaScript / TypeScript analysis |
