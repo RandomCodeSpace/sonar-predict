@@ -16,8 +16,11 @@ import org.junit.jupiter.api.Test;
 import io.github.randomcodespace.sonarpredict.protocol.Json;
 import io.github.randomcodespace.sonarpredict.protocol.dto.AnalysisWarning;
 import io.github.randomcodespace.sonarpredict.protocol.dto.AnalyzeResponse;
+import io.github.randomcodespace.sonarpredict.protocol.dto.FileEdit;
 import io.github.randomcodespace.sonarpredict.protocol.dto.Issue;
+import io.github.randomcodespace.sonarpredict.protocol.dto.QuickFix;
 import io.github.randomcodespace.sonarpredict.protocol.dto.RuleMetadata;
+import io.github.randomcodespace.sonarpredict.protocol.dto.TextEdit;
 
 /**
  * Unit tests for the {@link Reporter} implementations: {@link TextReporter}
@@ -162,5 +165,49 @@ class ReportersTest {
         assertNull(ruleBlock.get("description"),
                 "the compact JSON rule block must not carry an HTML 'description'");
         assertNotNull(ruleBlock.get("name"), "the rule name stays in the compact JSON");
+    }
+
+    @Test
+    @DisplayName("JsonReporter omits 'quickFixes' for issues that have none (token-lean)")
+    void jsonOmitsEmptyQuickFixes() throws Exception {
+        String json = new JsonReporter().render(WITH_ISSUES);
+
+        assertFalse(json.contains("\"quickFixes\""),
+                "an issue with no analyzer-supplied quick fix must not emit an empty array; "
+                        + "the field should be absent. got: " + json);
+    }
+
+    @Test
+    @DisplayName("JsonReporter emits a quickFixes array when the issue carries one")
+    void jsonEmitsQuickFixes() throws Exception {
+        Issue withFix = new Issue(
+                "java:S1118", "src/Util.java", 3, 13, 3, 17,
+                "MAJOR", "CODE_SMELL", "Add a private constructor.",
+                List.of(new QuickFix(
+                        "Add a private constructor",
+                        List.of(new FileEdit(
+                                "src/Util.java",
+                                List.of(new TextEdit(3, 0, 3, 0,
+                                        "    private Util() {}\n")))))));
+        AnalyzeResponse response = new AnalyzeResponse(List.of(withFix), List.of());
+
+        String json = new JsonReporter().render(response);
+        JsonNode root = Json.mapper().readTree(json);
+        JsonNode issue = root.get("files").get(0).get("issues").get(0);
+
+        JsonNode qfs = issue.get("quickFixes");
+        assertNotNull(qfs, "the issue must carry a quickFixes array; got: " + json);
+        assertEquals(1, qfs.size(), "exactly one quick fix was supplied");
+        assertEquals("Add a private constructor", qfs.get(0).get("message").asText());
+
+        JsonNode fileEdit = qfs.get(0).get("fileEdits").get(0);
+        assertEquals("src/Util.java", fileEdit.get("filePath").asText());
+
+        JsonNode edit = fileEdit.get("edits").get(0);
+        assertEquals(3, edit.get("startLine").asInt());
+        assertEquals(0, edit.get("startColumn").asInt());
+        assertEquals(3, edit.get("endLine").asInt());
+        assertEquals(0, edit.get("endColumn").asInt());
+        assertEquals("    private Util() {}\n", edit.get("replacement").asText());
     }
 }

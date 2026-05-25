@@ -13,8 +13,11 @@ import io.github.randomcodespace.sonarpredict.cli.coverage.FileCoverage;
 import io.github.randomcodespace.sonarpredict.protocol.Json;
 import io.github.randomcodespace.sonarpredict.protocol.dto.AnalysisWarning;
 import io.github.randomcodespace.sonarpredict.protocol.dto.AnalyzeResponse;
+import io.github.randomcodespace.sonarpredict.protocol.dto.FileEdit;
 import io.github.randomcodespace.sonarpredict.protocol.dto.Issue;
+import io.github.randomcodespace.sonarpredict.protocol.dto.QuickFix;
 import io.github.randomcodespace.sonarpredict.protocol.dto.RuleMetadata;
+import io.github.randomcodespace.sonarpredict.protocol.dto.TextEdit;
 
 /**
  * Renders an {@link AnalyzeResponse} as compact, single-line JSON, parseable by
@@ -97,6 +100,10 @@ public final class JsonReporter implements Reporter {
     /**
      * Builds one issue node with a fixed, deterministic field order. When
      * {@code metadata} is non-null the issue gains a nested {@code rule} object.
+     * When the issue carries any analyzer-supplied {@link QuickFix}es, the
+     * issue gains a {@code quickFixes} array; the field is omitted (rather
+     * than emitted as {@code []}) to keep the wire format token-lean for
+     * the common case where rules don't supply machine-applicable fixes.
      */
     private static ObjectNode issueNode(Issue issue, RuleMetadata metadata) {
         ObjectNode node = Json.mapper().createObjectNode();
@@ -115,6 +122,37 @@ public final class JsonReporter implements Reporter {
             rule.put("name", metadata.name());
             rule.put("language", metadata.language());
             rule.put("howToFix", metadata.howToFix());
+        }
+        if (!issue.quickFixes().isEmpty()) {
+            ArrayNode quickFixes = node.putArray("quickFixes");
+            for (QuickFix qf : issue.quickFixes()) {
+                quickFixes.add(quickFixNode(qf));
+            }
+        }
+        return node;
+    }
+
+    /**
+     * Builds one {@code {message, fileEdits:[{filePath, edits:[…]}]}} node
+     * for an analyzer-supplied quick fix. Field order matches the DTO so
+     * the emitted JSON can roundtrip through {@code Json.mapper().readValue}.
+     */
+    private static ObjectNode quickFixNode(QuickFix qf) {
+        ObjectNode node = Json.mapper().createObjectNode();
+        node.put("message", qf.message());
+        ArrayNode fileEdits = node.putArray("fileEdits");
+        for (FileEdit fe : qf.fileEdits()) {
+            ObjectNode feNode = fileEdits.addObject();
+            feNode.put("filePath", fe.filePath());
+            ArrayNode edits = feNode.putArray("edits");
+            for (TextEdit te : fe.edits()) {
+                ObjectNode teNode = edits.addObject();
+                teNode.put("startLine", te.startLine());
+                teNode.put("startColumn", te.startColumn());
+                teNode.put("endLine", te.endLine());
+                teNode.put("endColumn", te.endColumn());
+                teNode.put("replacement", te.replacement());
+            }
         }
         return node;
     }
