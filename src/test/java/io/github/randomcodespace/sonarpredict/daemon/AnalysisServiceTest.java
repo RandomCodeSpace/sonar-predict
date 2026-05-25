@@ -1,5 +1,6 @@
 package io.github.randomcodespace.sonarpredict.daemon;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,6 +44,32 @@ class AnalysisServiceTest {
             boolean hasS1118 = response.issues().stream()
                     .anyMatch(i -> "java:S1118".equals(i.ruleKey()));
             assertTrue(hasS1118, "expected java:S1118, got: " + response.issues());
+        }
+    }
+
+    @Test
+    @DisplayName("java:S1118 on UtilityClass.java carries an analyzer-supplied quick fix")
+    void analyze_java_s1118_carriesQuickFix() {
+        try (AnalysisService service = new AnalysisService()) {
+            AnalyzeResponse response = service.analyze(request("java/UtilityClass.java"));
+
+            Issue s1118 = response.issues().stream()
+                    .filter(i -> "java:S1118".equals(i.ruleKey()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError(
+                            "expected java:S1118 in: " + response.issues()));
+            assertFalse(s1118.quickFixes().isEmpty(),
+                    "java:S1118 must surface at least one analyzer-supplied quick fix; got: "
+                            + s1118);
+            assertFalse(s1118.quickFixes().get(0).fileEdits().isEmpty(),
+                    "quick-fix must have at least one file edit; got: " + s1118.quickFixes());
+            assertFalse(
+                    s1118.quickFixes().get(0).fileEdits().get(0).edits().isEmpty(),
+                    "file edit must have at least one text edit; got: " + s1118.quickFixes());
+            // The edit's path must match the issue's path (relative to baseDir).
+            assertEquals(s1118.filePath(),
+                    s1118.quickFixes().get(0).fileEdits().get(0).filePath(),
+                    "quick-fix file path must match the issue's file path");
         }
     }
 
