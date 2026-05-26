@@ -26,10 +26,9 @@ import io.github.randomcodespace.sonarpredict.protocol.Json;
  * manifest needs <em>zero</em> new dependencies, whereas a TOML manifest would
  * pull in a parser library purely for this one file.
  *
- * <p><b>Engine checksum.</b> {@code daemon/plugins/CHECKSUMS.txt} pins the ten
- * plugin jars; the analysis engine jar is not listed there. The bundled
- * manifest carries a placeholder engine SHA-256 (all zeros) until the real
- * published checksum is pinned. {@code setup} verifies whatever the manifest
+ * <p><b>Engine checksum.</b> The bundled manifest pins the SHA-256 of every
+ * artifact — engine and plugin jars alike — taken directly from the Maven
+ * artifacts that pom.xml resolves. {@code setup} verifies whatever the manifest
  * declares; tests inject a manifest whose engine checksum matches the fake
  * artifact they serve.
  */

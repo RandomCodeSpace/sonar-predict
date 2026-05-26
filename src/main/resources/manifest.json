@@ -1,41 +1,41 @@
 {
-  "version": "10.24.0.81415",
+  "version": "11.3.0.85510",
   "engine": {
     "groupId": "org.sonarsource.sonarlint.core",
     "artifactId": "sonarlint-analysis-engine",
-    "version": "10.24.0.81415",
-    "sha256": "76d746bd5e2fafae22e772532974df20a3ea88cd49166c42e35c9178e6a72372"
+    "version": "11.3.0.85510",
+    "sha256": "93a767cdc3314f73fb2df8fe9627e7290d2a9ba9ec2a9f3509adcd4c4ea7a5ee"
   },
   "plugins": [
     {
       "groupId": "org.sonarsource.java",
       "artifactId": "sonar-java-plugin",
-      "version": "8.15.0.39343",
-      "sha256": "59272239c94da5b666448ea72d6447c99659328be6c165131f07d68c490f4354"
+      "version": "8.29.0.43460",
+      "sha256": "9074959dc428b8ac4e3600b956c2ce1c9e98d161a89337592a97f4ab92a5c782"
     },
     {
       "groupId": "org.sonarsource.python",
       "artifactId": "sonar-python-plugin",
-      "version": "5.5.0.23291",
-      "sha256": "a6d3384e44f3bccd5ac10edfc14ace25d5a358452ef53036a1cb70d1832714de"
+      "version": "5.22.0.33216",
+      "sha256": "ffa138c6552163c2ee25265a3ef2ec98ae74d1515a390f00f0992775b07303d2"
     },
     {
       "groupId": "org.sonarsource.javascript",
       "artifactId": "sonar-javascript-plugin",
-      "version": "10.24.0.33043",
-      "sha256": "eeffe334a3b3c615e139327fdf1b7d1db581b4376b2c7a24fe7d1f4a1546f96d"
+      "version": "12.5.0.41048",
+      "sha256": "795e529292809afa34f75f587ed1713d3fb4073c84a5402bb5d102d7a510ed0d"
     },
     {
       "groupId": "org.sonarsource.php",
       "artifactId": "sonar-php-plugin",
-      "version": "3.46.0.13151",
-      "sha256": "a4b0f2889d04ce8ecc96b5bb0cd3bb422ed8870cf62c4ac8de9c61ab881901e3"
+      "version": "3.57.0.15976",
+      "sha256": "8fa48b8914902a41bd1b12d4bd08c641b9fec85ee92911f3a28c89957a0deb39"
     },
     {
       "groupId": "org.sonarsource.kotlin",
       "artifactId": "sonar-kotlin-plugin",
-      "version": "3.2.0.7239",
-      "sha256": "c26c9e59d1df414675f11c7de2a0967dc34fd2724829f1ec2088e4fa9983081a"
+      "version": "3.6.0.9326",
+      "sha256": "c093cef45abdc2dc75465c0b593857e3a520b9467a13c5f54192f5a227b9d6ce"
     },
     {
       "groupId": "org.sonarsource.slang",
@@ -46,26 +46,26 @@
     {
       "groupId": "org.sonarsource.slang",
       "artifactId": "sonar-ruby-plugin",
-      "version": "1.19.0.471",
-      "sha256": "b84009dace4770cab106c8a85946f56ff30897005d8b79756932a8549990cafd"
+      "version": "1.22.0.1992",
+      "sha256": "1d57a2425cb3a5253b1c9d8c0c174b99e844563cc94ec6a4d783e23bd3b82913"
     },
     {
       "groupId": "org.sonarsource.slang",
       "artifactId": "sonar-scala-plugin",
-      "version": "1.19.0.484",
-      "sha256": "523368f715e8572b0557ab487e55ade37feb935ccd8927b3e45ba633b5a77d03"
+      "version": "1.23.0.2394",
+      "sha256": "b7cd042df5fe886c63856e6c39671be3fd883676d957e72627301cbc12f31419"
     },
     {
       "groupId": "org.sonarsource.html",
       "artifactId": "sonar-html-plugin",
-      "version": "3.19.0.5695",
-      "sha256": "f34ed7594be94bee1921858a36a5c80505e6d01e9dfaf3419418ab61bd5809aa"
+      "version": "3.27.0.7699",
+      "sha256": "2595581d86a7978a1b022d0396159bdae2c09e5d4ce4c2d28b25b09898d91f71"
     },
     {
       "groupId": "org.sonarsource.xml",
       "artifactId": "sonar-xml-plugin",
-      "version": "2.13.0.5938",
-      "sha256": "8a4ead9b9ab9b9c744cc88e8fca8b25e06f1972fa4d4871712f9863a869e7ec2"
+      "version": "2.17.0.7895",
+      "sha256": "ebfa3336bd3ede79b0f4bb94b7aa3fe44e64b8178b6690c6f4fa30e31607b152"
     }
   ]
 }
