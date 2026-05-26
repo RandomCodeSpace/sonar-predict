@@ -85,7 +85,13 @@ class SetupCommandTest {
     private SetupRunner stubRunner(SetupCommand.RunnerInputs inputs) {
         seenRepoBase.set(inputs.repoBase());
         Downloader downloader = new Downloader();
-        return new SetupRunner(manifest, inputs.repoBase(), inputs.layout(),
+        // Production SetupCommand keys the layout off Manifest.bundled().version(),
+        // but the test injects its own manifest with its own version. Build the
+        // layout from the test's manifest (sonar.home is set by setupCommandInto,
+        // so forVersion picks up the test base) so the test is isolated from
+        // bundled-manifest version bumps.
+        RuntimeLayout layout = RuntimeLayout.forVersion(manifest.version());
+        return new SetupRunner(manifest, inputs.repoBase(), layout,
                 new PluginProvisioner(downloader));
     }
 

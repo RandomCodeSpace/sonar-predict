@@ -29,7 +29,7 @@ class ManifestTest {
         Manifest manifest = Manifest.bundled();
 
         assertEquals("sonarlint-analysis-engine", manifest.engine().artifactId());
-        assertEquals("10.24.0.81415", manifest.engine().version());
+        assertEquals("11.3.0.85510", manifest.engine().version());
 
         assertEquals(10, manifest.plugins().size(),
                 "the manifest must pin all ten analyzer plugins");
@@ -55,7 +55,7 @@ class ManifestTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals("org.sonarsource.java", java.groupId());
-        assertEquals("8.15.0.39343", java.version());
+        assertEquals("8.29.0.43460", java.version());
     }
 
     private static void assertArtifactComplete(Manifest.Artifact artifact) {
