@@ -23,3 +23,6 @@ plugins/*.jar
 __pycache__/
 *.pyc
 
+# Claude Code project config (local only, not a project deliverable).
+.claude/
+
