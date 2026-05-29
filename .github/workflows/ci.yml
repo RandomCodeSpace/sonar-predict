@@ -95,23 +95,51 @@ jobs:
           mkdir -p "$OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"
           # outputName uses ${project.version}; resolve the actual emitted file.
           SBOM=$(ls target/*-bom.json | head -n1)
-          echo "Scanning SBOM: $SBOM"
+          if [ -z "${SBOM:-}" ] || [ ! -f "$SBOM" ]; then
+            echo "::error::CycloneDX SBOM not found under target/*-bom.json — cannot run the CVE gate."
+            exit 1
+          fi
+          # osv-scanner detects SBOM format from the FILENAME; '<name>-bom.json'
+          # is not a recognized CycloneDX name (it silently parses nothing), so
+          # copy to a recognized '.cdx.json' name before scanning.
+          SBOM_CDX="$RUNNER_TEMP/bom.cdx.json"
+          cp "$SBOM" "$SBOM_CDX"
+          echo "Scanning SBOM: $SBOM (as $SBOM_CDX)"
           # --offline-vulnerabilities: never contacts the live feed during scan.
           # --download-offline-databases: refresh the cached DB if cache missed.
-          # osv-scanner exits 1 on ANY finding; we ignore its exit code and gate
-          # ourselves on CVSS severity from the JSON instead.
+          # -L: lockfile/SBOM input (replaces the deprecated --sbom).
+          set +e
           osv-scanner scan \
             --offline-vulnerabilities \
             --download-offline-databases \
             --format json \
-            --sbom "$SBOM" > osv-results.json || true
+            -L "$SBOM_CDX" > osv-results.json 2> osv-stderr.txt
+          OSV_EXIT=$?
+          set -e
+          cat osv-stderr.txt || true
+          # FAIL CLOSED: osv-scanner exits 0 (no vulns) or 1 (vulns found) on a
+          # real scan; any other exit code, a parse error, or a missing results
+          # object means NOTHING was scanned — the gate must fail, never pass on
+          # a non-scan (the bug this replaces let a non-scan pass green).
+          if [ "$OSV_EXIT" != "0" ] && [ "$OSV_EXIT" != "1" ]; then
+            echo "::error::osv-scanner did not complete a scan (exit $OSV_EXIT) — failing closed."
+            exit 1
+          fi
+          if grep -qiE "Failed to parse|invalid SBOM" osv-stderr.txt; then
+            echo "::error::osv-scanner could not ingest the SBOM — failing closed."
+            exit 1
+          fi
+          if ! jq -e 'has("results")' osv-results.json >/dev/null 2>&1; then
+            echo "::error::osv-scanner produced no results object — failing closed."
+            exit 1
+          fi
           # Gate: max_severity is a CVSS base-score string per vulnerability
           # group. >= 7.0 == HIGH or CRITICAL (CVSS v3). Anything below is
           # non-blocking per security.md. An unscored group (null or "") is
           # coerced to 0 so a missing CVSS never crashes or trips the gate.
           SEV='((.max_severity // "0") | if . == "" then "0" else . end | tonumber)'
           HIGH=$(jq "[.results[]?.packages[]?.groups[]? | ${SEV} | select(. >= 7.0)] | length" osv-results.json)
-          echo "HIGH/CRITICAL findings (CVSS >= 7.0): ${HIGH}"
+          echo "HIGH/CRITICAL findings (CVSS >= 7.0): ${HIGH:-0}"
           jq -r ".results[]?.packages[]? | .package as \$p | .groups[]? | ${SEV} as \$s | select(\$s >= 7.0) | \"  BLOCK \(\$p.name)@\(\$p.version) CVSS=\(.max_severity) \(.ids | join(\",\"))\"" osv-results.json || true
           if [ "${HIGH:-0}" -gt 0 ]; then
             echo "::error::${HIGH} HIGH/CRITICAL dependency vulnerabilit(ies) found — failing per security policy."
