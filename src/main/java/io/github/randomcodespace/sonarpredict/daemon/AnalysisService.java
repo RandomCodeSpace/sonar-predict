@@ -291,6 +291,14 @@ public final class AnalysisService implements AutoCloseable {
                 Set.of(),
                 Map.of());
 
+        // Clear the engine log before posting. One EngineLog lives for the
+        // whole daemon; left alone its backing list grows for every log line of
+        // every scan across the daemon's ~50-minute life — an unbounded leak.
+        // Resetting here bounds it to this single analysis. Safe: every analysis
+        // holds analysisLock and the prior scan's await() returned before the
+        // lock was released, so no engine worker thread is appending right now.
+        engineLog.reset();
+
         // Snapshot the engine log before posting: every analysis runs holding
         // analysisLock, so the messages appended between here and the result
         // belong to exactly this analysis. They are scanned below for a

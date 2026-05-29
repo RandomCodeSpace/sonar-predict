@@ -72,6 +72,27 @@ public final class EngineLog implements LogOutput {
         }
     }
 
+    /**
+     * Discards every message collected so far, scoping this target to the lines
+     * received from now on.
+     *
+     * <p>A single {@code EngineLog} lives for the whole daemon and receives a
+     * line for every engine log message of every scan. Without this reset the
+     * backing list grows unbounded across the daemon's lifetime — hundreds of
+     * scans over its ~50-minute life — a memory leak. {@code AnalysisService}
+     * calls it at the start of each analysis (holding its analysis lock, before
+     * the engine worker thread is posted), so the list is bounded to one scan's
+     * lines.
+     *
+     * <p>{@code clear()} on the backing {@link CopyOnWriteArrayList} is atomic
+     * and publishes through the same volatile array as {@link #log}, so the
+     * reset cannot race or tear against an {@link #log add} from the engine
+     * worker thread.
+     */
+    public void reset() {
+        messages.clear();
+    }
+
     /** Messages received by this instance, in arrival order. */
     public List<String> messages() {
         return List.copyOf(messages);
