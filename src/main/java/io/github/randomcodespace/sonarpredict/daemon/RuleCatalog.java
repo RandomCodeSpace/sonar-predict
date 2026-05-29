@@ -71,8 +71,24 @@ public final class RuleCatalog {
 
     private final Map<String, RuleMetadata> rulesByKey;
 
+    /**
+     * The full catalog ({@link #all()}) pre-serialized to a JSON tree once at
+     * construction. The catalog is immutable for the life of this instance
+     * (plugins load once), so {@code RULE_METADATA} full-catalog requests can
+     * reuse this node instead of re-sorting and re-serializing every rule's
+     * multi-KB HTML on each request.
+     *
+     * <p>Built eagerly so it is fully published by the time any thread can call
+     * {@link #allAsJsonNode()} — no lazy double-checked init, no data race. It is
+     * read-only after construction (no method mutates it); the only consumer is
+     * the protocol serializer, which never writes to it, so sharing the instance
+     * across socket threads is safe.
+     */
+    private final JsonNode allAsJsonNode;
+
     private RuleCatalog(Map<String, RuleMetadata> rulesByKey) {
         this.rulesByKey = Map.copyOf(rulesByKey);
+        this.allAsJsonNode = Json.mapper().valueToTree(all());
     }
 
     /**
@@ -240,6 +256,20 @@ public final class RuleCatalog {
         return rulesByKey.values().stream()
                 .sorted(java.util.Comparator.comparing(RuleMetadata::ruleKey))
                 .toList();
+    }
+
+    /**
+     * The full catalog ({@link #all()}) as a pre-serialized, memoized JSON tree.
+     *
+     * <p>Byte-equivalent to serializing {@link #all()} on demand, but built once
+     * at construction so repeated full-catalog {@code RULE_METADATA} requests do
+     * not re-serialize every rule. The returned node is shared and must be
+     * treated as read-only; callers hand it straight to the serializer.
+     *
+     * @return the memoized full-catalog JSON tree (an array of {@code RuleMetadata})
+     */
+    public JsonNode allAsJsonNode() {
+        return allAsJsonNode;
     }
 
     /** {@code true} if the catalog holds no rules. */

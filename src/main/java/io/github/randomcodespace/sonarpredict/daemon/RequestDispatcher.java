@@ -88,12 +88,18 @@ public final class RequestDispatcher {
      * rule (and fails if the key is unknown); a {@code null} or blank payload
      * returns the entire catalog as a {@code List<RuleMetadata>}, which is how
      * the CLI builds its {@code RuleMetadataIndex} in one round trip.
+     *
+     * <p>The full-catalog ({@code null}-key) branch returns the catalog's
+     * memoized JSON tree ({@link RuleCatalog#allAsJsonNode()}) rather than
+     * rebuilding and re-serializing the {@code List<RuleMetadata>} on every
+     * request; the resulting wire bytes are identical (the catalog is immutable
+     * for the daemon's life). The single-key branch is unchanged.
      */
     private Object ruleMetadata(WireMessage request) {
         JsonNode payload = request.payload();
         if (payload == null || payload.isNull()
                 || (payload.isTextual() && payload.asText().isBlank())) {
-            return ruleCatalog.all();
+            return ruleCatalog.allAsJsonNode();
         }
         if (!payload.isTextual()) {
             throw new IllegalArgumentException(
@@ -133,8 +139,14 @@ public final class RequestDispatcher {
     }
 
     private static WireMessage response(WireMessage request, Object payload) {
-        return new WireMessage(
-                request.id(), request.method(), Json.mapper().valueToTree(payload));
+        // A handler that already produced a serialized JSON tree (the memoized
+        // full rule catalog) is used as-is: re-running valueToTree on it would
+        // deep-copy the tree (TokenBuffer round-trip) on every request, undoing
+        // the cache. The bytes are identical either way; this just skips the copy.
+        JsonNode tree = (payload instanceof JsonNode node)
+                ? node
+                : Json.mapper().valueToTree(payload);
+        return new WireMessage(request.id(), request.method(), tree);
     }
 
     private static WireMessage error(WireMessage request, String message) {
