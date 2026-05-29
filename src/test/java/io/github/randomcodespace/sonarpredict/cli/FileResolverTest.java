@@ -126,6 +126,20 @@ class FileResolverTest {
                 "diff against the default ref (HEAD) must see the working-tree change");
     }
 
+    @Test
+    @DisplayName("--diff rejects a ref that would inject a git option (e.g. --output=)")
+    void diffRejectsOptionInjectionRef(@TempDir Path dir) {
+        // A ref beginning with '-' would be parsed by git as an option
+        // (e.g. --output=<file> writing attacker-chosen paths) rather than a
+        // revision. It must be rejected before git is ever invoked.
+        assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolveDiff(dir, "--output=/tmp/pwned"),
+                "a long-option-style ref must be rejected to prevent git option injection");
+        assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolveDiff(dir, "-O/tmp/pwned"),
+                "a short-option-style ref must also be rejected");
+    }
+
     private static void git(Path dir, String... args) throws Exception {
         java.util.List<String> command = new java.util.ArrayList<>();
         command.add("git");

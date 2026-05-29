@@ -36,6 +36,41 @@ final class TarWriter implements Closeable {
         }
     }
 
+    /**
+     * Writes a GNU long-name ({@code 'L'}) entry whose payload is
+     * {@code longName}, then the real file entry — exercises {@code Tar}'s
+     * long-name handling for paths longer than the 100-byte USTAR name field.
+     */
+    void addLongNameFile(String longName, byte[] content, boolean executable) throws IOException {
+        byte[] nameBytes = longName.getBytes(StandardCharsets.UTF_8);
+        byte[] payload = new byte[nameBytes.length + 1]; // GNU long names are NUL-terminated
+        System.arraycopy(nameBytes, 0, payload, 0, nameBytes.length);
+        writeBlocked(header("././@LongLink", payload.length, 'L', 0_644), payload);
+        String shortName = longName.length() <= 100
+                ? longName : longName.substring(longName.length() - 100);
+        writeBlocked(header(shortName, content.length, '0', executable ? 0_755 : 0_644), content);
+    }
+
+    /**
+     * Writes a file header declaring {@code declaredSize} bytes but emits only
+     * {@code body} (fewer) and no end-of-archive blocks — exercises {@code Tar}'s
+     * truncated-entry handling. Do not call {@link #close()} afterwards.
+     */
+    void addTruncatedFile(String name, int declaredSize, byte[] body) throws IOException {
+        out.write(header(name, declaredSize, '0', 0_644));
+        out.write(body);
+    }
+
+    /** Writes a header followed by its payload padded to the 512-byte block. */
+    private void writeBlocked(byte[] header, byte[] payload) throws IOException {
+        out.write(header);
+        out.write(payload);
+        int pad = (int) ((BLOCK - (payload.length % BLOCK)) % BLOCK);
+        if (pad > 0) {
+            out.write(new byte[pad]);
+        }
+    }
+
     private static byte[] header(String name, int size, char type, int mode) {
         byte[] h = new byte[BLOCK];
         byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);

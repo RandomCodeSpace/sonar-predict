@@ -131,7 +131,9 @@ public final class FileResolver {
      * @param projectDir the git working tree to inspect
      * @param ref        the ref to diff against, or {@code null} for {@code HEAD}
      * @return the resolved base directory and the changed files that still exist
-     * @throws IllegalArgumentException if {@code projectDir} is not a directory
+     * @throws IllegalArgumentException if {@code projectDir} is not a directory,
+     *                                  or {@code ref} starts with {@code '-'}
+     *                                  (rejected to prevent git option injection)
      * @throws DaemonException          if the {@code git} invocation fails
      */
     public ResolvedFiles resolveDiff(Path projectDir, String ref) {
@@ -140,7 +142,15 @@ public final class FileResolver {
         if (!Files.isDirectory(base)) {
             throw new IllegalArgumentException("not a directory: " + projectDir);
         }
-        String against = (ref == null || ref.isBlank()) ? "HEAD" : ref;
+        String against = (ref == null || ref.isBlank()) ? "HEAD" : ref.strip();
+        // Reject git option injection: a ref starting with '-' would be parsed
+        // by git as an option (e.g. --output=<file>, --ext-diff) rather than a
+        // revision. A legitimate git ref never begins with '-'
+        // (git check-ref-format), so this rejects only hostile input.
+        if (against.startsWith("-")) {
+            throw new IllegalArgumentException(
+                    "invalid git ref (must not start with '-'): " + against);
+        }
         List<String> changed = gitDiffNames(base, against);
         List<Path> existing = new ArrayList<>();
         for (String name : changed) {
@@ -161,8 +171,11 @@ public final class FileResolver {
      */
     @SuppressWarnings("java:S4036")
     private static List<String> gitDiffNames(Path workingTree, String ref) {
+        // Trailing "--" ends option parsing and separates the revision from any
+        // pathspec, so the ref cannot be reinterpreted as a path; combined with
+        // the leading-'-' rejection in resolveDiff this closes option injection.
         ProcessBuilder builder = new ProcessBuilder(
-                "git", "diff", "--name-only", ref)
+                "git", "diff", "--name-only", ref, "--")
                 .directory(workingTree.toFile())
                 .redirectError(ProcessBuilder.Redirect.DISCARD);
         List<String> names = new ArrayList<>();
