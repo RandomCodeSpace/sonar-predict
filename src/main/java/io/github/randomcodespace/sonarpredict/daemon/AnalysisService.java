@@ -33,6 +33,7 @@ import org.sonarsource.sonarlint.core.commons.progress.SonarLintCancelMonitor;
 import org.sonarsource.sonarlint.core.commons.progress.TaskManager;
 import org.sonarsource.sonarlint.core.plugin.commons.LoadedPlugins;
 
+import io.github.randomcodespace.sonarpredict.cli.setup.Manifest;
 import io.github.randomcodespace.sonarpredict.protocol.dto.AnalysisWarning;
 import io.github.randomcodespace.sonarpredict.protocol.dto.AnalyzeRequest;
 import io.github.randomcodespace.sonarpredict.protocol.dto.AnalyzeResponse;
@@ -43,7 +44,8 @@ import io.github.randomcodespace.sonarpredict.protocol.dto.AnalyzeResponse;
  * supported files in one pass, and returns an {@link AnalyzeResponse} of mapped
  * issues and warnings.
  *
- * <p><b>Warm engine.</b> Plugins ({@link PluginRuntime#loadAll}), the
+ * <p><b>Warm engine.</b> Plugins (the manifest-verified allow-list from
+ * {@link PluginVerifier}, loaded via {@link PluginRuntime#loadFrom}), the
  * {@link RuleCatalog}, and the engine {@link AnalysisScheduler} are all built
  * <em>once</em> in the constructor and reused for every {@link #analyze} call.
  * The {@code AnalysisScheduler} is explicitly designed for this: it owns a
@@ -135,7 +137,13 @@ public final class AnalysisService implements AutoCloseable {
         // SAME instance is what keeps every per-analysis sensor message — most
         // importantly a swallowed "Error executing sensor" — visible here.
         this.engineLog = EngineLog.installAndCapture();
-        this.loadedPlugins = PluginRuntime.loadAll(pluginsDir);
+        // Load an explicit, manifest-verified allow-list rather than blindly
+        // globbing every jar: an attacker-placed or tampered analyzer in the
+        // plugins directory makes the daemon refuse to start instead of being
+        // loaded into the engine. The trust decision is made here, in the
+        // process that actually loads the bytecode, not only in the launcher.
+        this.loadedPlugins = PluginRuntime.loadFrom(
+                PluginVerifier.verifiedJars(pluginsDir, Manifest.bundled()));
         // The real loaded-language set: an analyzer skipped at load time (e.g.
         // the JS/TS/CSS plugin with no Node.js runtime) is absent here, so
         // loadedLanguages() and the PING response never over-report capability.
