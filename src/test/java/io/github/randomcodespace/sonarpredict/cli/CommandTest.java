@@ -125,12 +125,28 @@ class CommandTest {
     }
 
     @Test
-    @DisplayName("version prints the CLI version and exits 0")
+    @DisplayName("version prints the runtime CLI version and exits 0")
     void versionExitsZero() {
         Run run = run(rpc(), control(), "version");
 
         assertEquals(0, run.exitCode(), "version must exit 0");
         assertFalse(run.out().isBlank(), "version must print something");
+        assertTrue(run.out().contains(SonarVersionProvider.version()),
+                "version must report the runtime build version, got: " + run.out());
+        assertFalse(run.out().contains("0.1.0"),
+                "version must not report the stale 0.1.0 literal, got: " + run.out());
+    }
+
+    @Test
+    @DisplayName("--version reports the runtime CLI version (not the stale literal)")
+    void versionFlagReportsRuntimeVersion() {
+        Run run = run(rpc(), control(), "--version");
+
+        assertEquals(0, run.exitCode(), "--version must exit 0");
+        assertTrue(run.out().contains(SonarVersionProvider.version()),
+                "--version must report the runtime build version, got: " + run.out());
+        assertFalse(run.out().contains("0.1.0"),
+                "--version must not report the stale 0.1.0 literal, got: " + run.out());
     }
 
     @Test

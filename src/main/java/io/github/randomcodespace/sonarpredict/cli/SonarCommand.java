@@ -35,7 +35,7 @@ import picocli.CommandLine.Spec;
 @Command(
         name = "sonar",
         mixinStandardHelpOptions = true,
-        version = "sonar " + SonarCommand.VERSION,
+        versionProvider = SonarVersionProvider.class,
         description = {
                 "Run the sonar analysis quality gate.",
                 "",
@@ -84,8 +84,6 @@ public final class SonarCommand implements Runnable {
     public static final int EXIT_ISSUES = 1;
     /** Exit code for a tool error — bad input, daemon unreachable. */
     public static final int EXIT_TOOL_ERROR = 2;
-
-    static final String VERSION = "0.1.0-SNAPSHOT";
 
     @Option(names = "--format",
             description = "Output format: sarif, json, or text. Default: sarif.")
@@ -362,7 +360,7 @@ public final class SonarCommand implements Runnable {
 
         @Override
         public void run() {
-            parent.spec.commandLine().getOut().println("sonar " + VERSION);
+            parent.spec.commandLine().getOut().println("sonar " + SonarVersionProvider.version());
         }
     }
 

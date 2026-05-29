@@ -1,6 +1,7 @@
 package io.github.randomcodespace.sonarpredict.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -63,6 +64,10 @@ class SarifReporterTest {
         assertEquals("sonar-predictor", driver.get("name").asText(),
                 "the driver name must be sonar-predictor");
         assertNotNull(driver.get("rules"), "the driver must carry a 'rules' array");
+        assertEquals(SonarVersionProvider.version(), driver.get("version").asText(),
+                "the driver version must be the runtime build version");
+        assertNotEquals("0.1.0-SNAPSHOT", driver.get("version").asText(),
+                "the driver version must not report the stale 0.1.0 literal");
     }
 
     @Test
