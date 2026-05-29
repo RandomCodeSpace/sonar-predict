@@ -3,6 +3,7 @@ package io.github.randomcodespace.sonarpredict.cli;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.UnixDomainSocketAddress;
@@ -239,6 +240,50 @@ class DaemonLauncherTest {
             } else {
                 System.setProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, previous);
             }
+        }
+    }
+
+    @Test
+    @DisplayName("a child that crashes before binding surfaces the captured daemon.log tail")
+    void startFailureSurfacesChildLogTail(@TempDir Path dir) throws Exception {
+        // Drive a deterministic startup failure: point sonar.daemon.jar at a
+        // file that is a regular file (so spawn()'s isRegularFile guard passes)
+        // but is NOT a runnable jar, so the child JVM exits non-zero writing
+        // "Invalid or corrupt jarfile" to stderr — captured into daemon.log.
+        Path notAJar = Files.writeString(dir.resolve("not-a.jar"), "this is not a jar\n");
+        Path workDir = Files.createDirectories(dir.resolve("work"));
+        Files.createDirectories(workDir.resolve("plugins"));
+
+        SocketPaths paths = SocketPaths.resolve(Map.of("XDG_RUNTIME_DIR", dir.toString()));
+        DaemonLauncher launcher = new DaemonLauncher(paths, Duration.ofSeconds(30));
+
+        String prevJar = System.getProperty(DaemonLauncher.DAEMON_JAR_PROPERTY);
+        String prevWorkDir = System.getProperty(DaemonLauncher.DAEMON_WORKDIR_PROPERTY);
+        System.setProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, notAJar.toString());
+        System.setProperty(DaemonLauncher.DAEMON_WORKDIR_PROPERTY, workDir.toString());
+        try {
+            IllegalStateException failure =
+                    assertThrows(IllegalStateException.class, launcher::start);
+
+            assertTrue(failure.getMessage().contains("daemon.log"),
+                    "the failure must name the captured log section, got: "
+                            + failure.getMessage());
+            assertTrue(failure.getMessage().toLowerCase(java.util.Locale.ROOT)
+                            .contains("jar"),
+                    "the failure must include the child's captured output (the JVM's "
+                            + "corrupt-jarfile error), not just a bare exit code, got: "
+                            + failure.getMessage());
+        } finally {
+            restoreProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, prevJar);
+            restoreProperty(DaemonLauncher.DAEMON_WORKDIR_PROPERTY, prevWorkDir);
+        }
+    }
+
+    private static void restoreProperty(String key, String previous) {
+        if (previous == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, previous);
         }
     }
 

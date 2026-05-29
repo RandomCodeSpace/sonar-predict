@@ -95,6 +95,9 @@ public final class DaemonLauncher {
 
     private static final String DAEMON_JAR_PREFIX = "sonar-predictor-daemon-";
 
+    /** Number of trailing {@code daemon.log} lines surfaced on a failed start. */
+    private static final int LOG_TAIL_LINES = 20;
+
     private final SocketPaths paths;
     private final Duration startupTimeout;
 
@@ -200,13 +203,27 @@ public final class DaemonLauncher {
         // The daemon resolves SocketPaths from its environment; force it onto
         // the same runtime directory this launcher expects.
         builder.environment().put("XDG_RUNTIME_DIR", paths.socket().getParent().toString());
-        builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        // Capture the detached child's stdout+stderr to a log file in the same
+        // runtime directory. A file redirect (not PIPE) is mandatory: the child
+        // is long-lived and detached, so there is no drain thread to consume a
+        // pipe — an unconsumed PIPE would eventually block the daemon. On the
+        // failure path awaitSocket() reads this log's tail to surface the
+        // child's real stack trace instead of a bare exit code. The daemon
+        // removes the log on stop (see Daemon.start's onStop), so a clean
+        // start/stop cycle leaves the runtime directory just as before.
+        Path log = logFile();
+        builder.redirectOutput(ProcessBuilder.Redirect.to(log.toFile()));
+        builder.redirectErrorStream(true);
         try {
             return builder.start();
         } catch (IOException e) {
             throw new UncheckedIOException("could not spawn the daemon JVM", e);
         }
+    }
+
+    /** The daemon's startup log, beside the socket in the runtime directory. */
+    private Path logFile() {
+        return paths.socket().getParent().resolve("daemon.log");
     }
 
     /**
@@ -303,9 +320,21 @@ public final class DaemonLauncher {
                 return;
             }
             if (!process.isAlive() && !isDaemonRunning()) {
-                throw new IllegalStateException(
-                        "daemon process exited (code " + process.exitValue()
-                                + ") before its socket began accepting connections");
+                int code = process.exitValue();
+                String message = "daemon process exited (code " + code
+                        + ") before its socket began accepting connections";
+                if (code == 0) {
+                    // Clean exit with no socket: the child detected a live
+                    // daemon and bowed out (lost the start race). Not a crash —
+                    // throw the bare message, no log tail (the log would only
+                    // hold the benign "another daemon already owns the socket"
+                    // notice, never a failure).
+                    throw new IllegalStateException(message);
+                }
+                // Genuine crash: the child JVM exited non-zero before binding.
+                // Surface the captured log tail so an air-gapped user sees the
+                // real stack trace instead of a bare exit code.
+                throw failureWithDiagnostics(message);
             }
             try {
                 Thread.sleep(20);
@@ -314,8 +343,45 @@ public final class DaemonLauncher {
                 throw new IllegalStateException("interrupted while waiting for the daemon", e);
             }
         }
-        throw new IllegalStateException(
+        throw failureWithDiagnostics(
                 "daemon socket did not start accepting within " + startupTimeout);
+    }
+
+    /**
+     * Builds an {@link IllegalStateException} for a genuine startup failure,
+     * appending the tail of the captured {@code daemon.log} when available so
+     * the child's real error is visible. The diagnostics path is best-effort
+     * and never throws: a missing or unreadable log just yields the bare
+     * {@code message}. When {@code SONAR_DEBUG} is set the same detail is also
+     * echoed to {@code stderr} for visibility in non-fatal flows.
+     */
+    private IllegalStateException failureWithDiagnostics(String message) {
+        String tail = readLogTail();
+        String detail = tail.isEmpty()
+                ? message
+                : message + System.lineSeparator()
+                        + "----- daemon.log (tail) -----" + System.lineSeparator()
+                        + tail;
+        if (!tail.isEmpty() && System.getenv("SONAR_DEBUG") != null) {
+            System.err.println(detail);
+        }
+        return new IllegalStateException(detail);
+    }
+
+    /** Last {@value #LOG_TAIL_LINES} lines of {@code daemon.log}, or "" if absent. */
+    private String readLogTail() {
+        Path log = logFile();
+        try {
+            if (!Files.isReadable(log)) {
+                return "";
+            }
+            List<String> lines = Files.readAllLines(log);
+            int from = Math.max(0, lines.size() - LOG_TAIL_LINES);
+            return String.join(System.lineSeparator(), lines.subList(from, lines.size()));
+        } catch (IOException | RuntimeException unreadable) {
+            // Diagnostics must never throw — fall back to no tail.
+            return "";
+        }
     }
 
     private static String javaExecutable() {
