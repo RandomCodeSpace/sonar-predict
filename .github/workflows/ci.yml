@@ -84,7 +84,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/osv"
-          curl -fsSL -o "$RUNNER_TEMP/osv/osv-scanner" \
+          # --proto '=https' --tlsv1.2: enforce HTTPS through redirects too, so a
+          # downgrade to http can never serve the binary (satisfies S6506).
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/osv/osv-scanner" \
             "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
           chmod +x "$RUNNER_TEMP/osv/osv-scanner"
           echo "$RUNNER_TEMP/osv" >> "$GITHUB_PATH"
