@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Locale;
@@ -13,7 +12,6 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -81,22 +79,7 @@ public final class RuleCatalog {
      */
     public static RuleCatalog fromPluginsDir(Path pluginsDir) {
         Map<String, RuleMetadata> rules = new HashMap<>();
-        int jarCount = 0;
-        try (Stream<Path> entries = Files.list(pluginsDir)) {
-            for (Path jar : entries
-                    .filter(p -> p.getFileName().toString().endsWith(".jar"))
-                    .toList()) {
-                jarCount++;
-                indexJar(jar, rules);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(
-                    "could not list plugins directory: " + pluginsDir.toAbsolutePath(), e);
-        }
-        if (jarCount == 0) {
-            throw new IllegalStateException(
-                    "no analyzer plugin JARs in " + pluginsDir.toAbsolutePath());
-        }
+        PluginsDir.forEachJar(pluginsDir, jar -> indexJar(jar, rules));
         addTypeScriptAliases(rules);
         return new RuleCatalog(rules);
     }

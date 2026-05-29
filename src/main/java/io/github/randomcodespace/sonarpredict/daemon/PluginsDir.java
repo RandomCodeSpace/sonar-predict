@@ -1,8 +1,14 @@
 package io.github.randomcodespace.sonarpredict.daemon;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Stream;
 
 /**
  * Resolves the directory the daemon loads its vendored analyzer plugin jars
@@ -53,5 +59,39 @@ final class PluginsDir {
             return Path.of(fromEnv);
         }
         return DEFAULT;
+    }
+
+    /**
+     * Applies {@code action} to every {@code *.jar} in {@code pluginsDir}, in
+     * directory-iteration order.
+     *
+     * <p>This is the shared jar-scan loop used by the in-memory plugin readers
+     * ({@code RuleCatalog}, {@code SonarWayProfiles}): list the directory,
+     * keep entries whose file name ends in {@code .jar}, and hand each to the
+     * caller. The directory must hold at least one plugin jar — an empty scan
+     * is a configuration error, not a silently-empty result.
+     *
+     * @param pluginsDir directory holding the vendored analyzer plugin JARs
+     * @param action     invoked once per discovered {@code *.jar}
+     * @throws IllegalStateException if the directory holds no {@code *.jar}
+     * @throws UncheckedIOException  if the directory cannot be listed
+     */
+    static void forEachJar(Path pluginsDir, Consumer<Path> action) {
+        List<Path> jars;
+        try (Stream<Path> entries = Files.list(pluginsDir)) {
+            jars = entries
+                    .filter(p -> p.getFileName().toString().endsWith(".jar"))
+                    .toList();
+        } catch (IOException e) {
+            throw new UncheckedIOException(
+                    "could not list plugins directory: " + pluginsDir.toAbsolutePath(), e);
+        }
+        if (jars.isEmpty()) {
+            throw new IllegalStateException(
+                    "no analyzer plugin JARs in " + pluginsDir.toAbsolutePath());
+        }
+        for (Path jar : jars) {
+            action.accept(jar);
+        }
     }
 }

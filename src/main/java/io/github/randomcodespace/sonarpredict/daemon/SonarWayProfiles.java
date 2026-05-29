@@ -3,7 +3,6 @@ package io.github.randomcodespace.sonarpredict.daemon;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -14,7 +13,6 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -71,22 +69,7 @@ public final class SonarWayProfiles {
      */
     public static SonarWayProfiles load(Path pluginsDir) {
         Map<SonarLanguage, List<String>> byLanguage = new EnumMap<>(SonarLanguage.class);
-        int jarCount = 0;
-        try (Stream<Path> entries = Files.list(pluginsDir)) {
-            for (Path jar : entries
-                    .filter(p -> p.getFileName().toString().endsWith(".jar"))
-                    .toList()) {
-                jarCount++;
-                indexJar(jar, byLanguage);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(
-                    "could not list plugins directory: " + pluginsDir.toAbsolutePath(), e);
-        }
-        if (jarCount == 0) {
-            throw new IllegalStateException(
-                    "no analyzer plugin JARs in " + pluginsDir.toAbsolutePath());
-        }
+        PluginsDir.forEachJar(pluginsDir, jar -> indexJar(jar, byLanguage));
         return new SonarWayProfiles(byLanguage);
     }
 

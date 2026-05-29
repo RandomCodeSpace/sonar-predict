@@ -24,7 +24,7 @@ import io.github.randomcodespace.sonarpredict.protocol.SocketPaths;
  * {@code sonar.daemon.jar} system property; that is the supported override and
  * the mechanism Plan 7's {@code setup} command will use to point at an
  * installed runtime. With no property set it falls back to a dev default — the
- * newest {@code daemon/target/sonar-predictor-daemon-*.jar} (the shaded jar,
+ * newest {@code target/sonar-predictor-daemon-*.jar} (the shaded jar,
  * never the {@code original-} prefixed unshaded one), located relative to the
  * working directory or its ancestors.
  *
@@ -117,7 +117,7 @@ public final class DaemonLauncher {
 
     /**
      * Resolves the daemon fat jar: the {@code sonar.daemon.jar} property if set,
-     * otherwise the dev-default shaded jar under {@code daemon/target/}.
+     * otherwise the dev-default shaded jar under {@code target/}.
      *
      * @return the resolved jar path
      * @throws IllegalStateException if no jar can be located
@@ -398,16 +398,12 @@ public final class DaemonLauncher {
         Path dir = Path.of("").toAbsolutePath();
         while (dir != null) {
             // Single-module layout: target/sonar-predictor-daemon-*.jar at the
-            // project root. Legacy multi-module: daemon/target/... — try both
-            // so a checkout of either generation still resolves.
-            for (Path candidate : new Path[] {
-                    dir.resolve("target"),
-                    dir.resolve("daemon").resolve("target") }) {
-                if (Files.isDirectory(candidate)) {
-                    Path jar = newestDaemonJar(candidate);
-                    if (jar != null) {
-                        return jar;
-                    }
+            // project root.
+            Path candidate = dir.resolve("target");
+            if (Files.isDirectory(candidate)) {
+                Path jar = newestDaemonJar(candidate);
+                if (jar != null) {
+                    return jar;
                 }
             }
             dir = dir.getParent();
