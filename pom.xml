@@ -278,6 +278,32 @@
                         <phase>verify</phase>
                         <goals><goal>report</goal></goals>
                     </execution>
+                    <!--
+                      Enforce the documented coverage policy as a real gate
+                      (was documentation-only). The floor is 0.80 line coverage
+                      at bundle level; measured coverage is ~0.86, so this passes
+                      today and ratchets up over time. Raise the minimum as
+                      coverage improves; never lower it to make a build pass.
+                    -->
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 
