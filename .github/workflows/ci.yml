@@ -129,3 +129,105 @@ jobs:
             target/*-bom.xml
             osv-results.json
           if-no-files-found: warn
+
+  # Byte-reproducible build gate. Builds the dist artifact twice (clean
+  # between), with the fixed project.build.outputTimestamp from the pom
+  # normalizing every archive entry's timestamp and order. If the two
+  # sha256 digests of target/*dist*.zip differ, the build is not
+  # reproducible and the job fails. The dist zip is emitted by the
+  # maven-assembly-plugin `build-dist-zip` execution bound to the `package`
+  # phase (target/sonar-predictor-dist-<version>.zip), so `package` is the
+  # exact goal that produces it; -DskipTests still runs the
+  # process-test-classes shade execs the assembly's lib/ jars depend on.
+  reproducible:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Node.js (JS/TS analyzer tests need a Node runtime)
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Build dist (1st) and record digest
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -DskipTests clean package
+          ZIP1=$(ls target/*dist*.zip | head -n1)
+          echo "First dist zip: $ZIP1"
+          sha256sum "$ZIP1" | awk '{print $1}' > /tmp/dist-hash-1.txt
+          cat /tmp/dist-hash-1.txt
+
+      - name: Build dist (2nd) and record digest
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -DskipTests clean package
+          ZIP2=$(ls target/*dist*.zip | head -n1)
+          echo "Second dist zip: $ZIP2"
+          sha256sum "$ZIP2" | awk '{print $1}' > /tmp/dist-hash-2.txt
+          cat /tmp/dist-hash-2.txt
+
+      - name: Compare digests (fail if not byte-reproducible)
+        run: |
+          set -euo pipefail
+          H1=$(cat /tmp/dist-hash-1.txt)
+          H2=$(cat /tmp/dist-hash-2.txt)
+          echo "Build 1: $H1"
+          echo "Build 2: $H2"
+          if [ "$H1" != "$H2" ]; then
+            echo "::error::Dist zip is not byte-reproducible ($H1 != $H2)."
+            exit 1
+          fi
+          echo "Dist zip is byte-reproducible: $H1"
+
+  # Hermetic offline build. First warms the local repo (~/.m2) and the
+  # plugins/ analyzer copies over the network, then proves `mvn -o clean
+  # verify` succeeds with NO network access. dependency:go-offline alone is
+  # insufficient: the maven-dependency-plugin `copy` executions fetch the 10
+  # analyzer jars (and the host jar is built locally), so a normal
+  # `-DskipTests package` is run first to populate ~/.m2 and plugins/ before
+  # the offline verify.
+  offline-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Node.js (JS/TS analyzer tests need a Node runtime)
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Warm local repo (resolve plugins, deps, analyzer copies)
+        run: |
+          set -euo pipefail
+          # Resolve the plugin/dependency graph...
+          mvn -B -ntp dependency:go-offline
+          # ...then a full package to populate ~/.m2 with the analyzer jars
+          # pulled by the dependency:copy executions and to build the local
+          # host/shade jars the assembly needs.
+          mvn -B -ntp -DskipTests package
+
+      - name: Offline verify (no network)
+        run: |
+          set -euo pipefail
+          # -o forces fully offline: any unresolved artifact fails here,
+          # proving the warmed repo is self-sufficient.
+          mvn -B -o clean verify
