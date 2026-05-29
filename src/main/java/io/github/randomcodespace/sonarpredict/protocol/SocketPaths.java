@@ -12,8 +12,15 @@ import java.util.Map;
  * Resolves the filesystem locations of the daemon's Unix domain socket and its
  * pidfile.
  *
- * <p>One shared daemon per machine: the names are fixed ({@code sonar-daemon}),
- * so any CLI process resolves the same pair and finds the running daemon.
+ * <p><b>Version-keyed names.</b> The socket/pidfile/lockfile names are keyed by
+ * the bundle version ({@code sonar-daemon-<version>}) when a version is supplied,
+ * so a CLI from one bundle never adopts a daemon left running by a different
+ * bundle version — an in-place upgrade silently serving stale analyzers is
+ * thereby impossible; the pre-upgrade daemon simply idles out on its own,
+ * now-orphaned socket. When no version is supplied (dev builds, tests) the bare
+ * {@code sonar-daemon} name is used and the one-daemon-per-machine behaviour is
+ * preserved. The launcher relays the exact token its {@link #version()} carries
+ * to the spawned daemon, so the two ends always resolve the identical names.
  *
  * <p><b>Directory choice.</b> On Linux a logged-in session has
  * {@code $XDG_RUNTIME_DIR} — a per-user, {@code 0700}, tmpfs-backed directory
@@ -40,37 +47,71 @@ import java.util.Map;
  */
 public final class SocketPaths {
 
-    /** Shared base name for the socket/pidfile pair — one daemon per machine. */
+    /** Base name for the socket/pidfile/lockfile triple. */
     private static final String BASE_NAME = "sonar-daemon";
-    private static final String SOCKET_NAME = BASE_NAME + ".sock";
-    private static final String PID_NAME = BASE_NAME + ".pid";
-    private static final String LOCK_NAME = BASE_NAME + ".lock";
 
     private final Path socket;
     private final Path pidFile;
     private final Path lockFile;
+    private final String version;
 
-    private SocketPaths(Path socket, Path pidFile, Path lockFile) {
+    private SocketPaths(Path socket, Path pidFile, Path lockFile, String version) {
         this.socket = socket;
         this.pidFile = pidFile;
         this.lockFile = lockFile;
+        this.version = version;
     }
 
-    /** Resolves the paths from the current process environment. */
+    /** Resolves the unversioned paths from the current process environment. */
     public static SocketPaths resolve() {
         return resolve(System.getenv());
     }
 
     /**
-     * Resolves the paths from the given environment map (test seam).
+     * Resolves the unversioned paths from the given environment map (test seam).
      *
      * @param env the environment to read {@code XDG_RUNTIME_DIR} from
-     * @return the resolved socket/pidfile pair
+     * @return the resolved triple using the bare {@code sonar-daemon} names
      */
     public static SocketPaths resolve(Map<String, String> env) {
+        return resolve(env, null);
+    }
+
+    /**
+     * Resolves the paths from the given environment, keying the
+     * socket/pidfile/lockfile names by {@code version} so a CLI never adopts a
+     * daemon from a different bundle version.
+     *
+     * @param env     the environment to read {@code XDG_RUNTIME_DIR} from
+     * @param version the bundle version token to key the names by; {@code null}
+     *                or blank yields the bare {@code sonar-daemon} names
+     * @return the resolved socket/pidfile/lockfile triple
+     */
+    public static SocketPaths resolve(Map<String, String> env, String version) {
         Path dir = runtimeDir(env);
+        String token = sanitizeVersion(version);
+        String base = token.isEmpty() ? BASE_NAME : BASE_NAME + "-" + token;
         return new SocketPaths(
-                dir.resolve(SOCKET_NAME), dir.resolve(PID_NAME), dir.resolve(LOCK_NAME));
+                dir.resolve(base + ".sock"),
+                dir.resolve(base + ".pid"),
+                dir.resolve(base + ".lock"),
+                token);
+    }
+
+    /**
+     * Normalizes a version token to a filesystem-safe path segment: runs of any
+     * character other than {@code [A-Za-z0-9._-]} collapse to a single
+     * {@code _}. {@code null} or blank yields the empty string (no suffix).
+     */
+    private static String sanitizeVersion(String version) {
+        if (version == null) {
+            return "";
+        }
+        String trimmed = version.strip();
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        return trimmed.replaceAll("[^A-Za-z0-9._-]+", "_");
     }
 
     private static Path runtimeDir(Map<String, String> env) {
@@ -149,5 +190,14 @@ public final class SocketPaths {
      */
     public Path lockFile() {
         return lockFile;
+    }
+
+    /**
+     * The sanitized version token keyed into the socket/pidfile/lockfile names,
+     * or the empty string when the names are unversioned. The launcher relays
+     * this verbatim to the spawned daemon so both ends resolve identical names.
+     */
+    public String version() {
+        return version;
     }
 }

@@ -49,7 +49,7 @@ import io.github.randomcodespace.sonarpredict.protocol.SocketPaths;
  *
  * <p><b>Java runtime.</b> The daemon launches with the {@code java} named by
  * {@code -Dsonar.java.exe} when set — the distribution's {@code bin/sonar}
- * launcher sets it to a Java 17+ runtime it auto-discovered. With the property
+ * launcher sets it to a Java 21+ runtime it auto-discovered. With the property
  * absent the daemon launches with the current/system {@code java} that started
  * the CLI. No JRE is provisioned or bundled.
  */
@@ -64,7 +64,7 @@ public final class DaemonLauncher {
     /**
      * System property naming the {@code java} executable used to spawn the
      * daemon. The distribution's {@code bin/sonar} launcher sets it to the
-     * Java 17+ runtime it auto-discovered, so the daemon launches on a
+     * Java 21+ runtime it auto-discovered, so the daemon launches on a
      * verified-compatible JVM rather than whichever {@code java} happens to be
      * on {@code PATH}. Absent, the launcher falls back to the current JVM's
      * {@code java.home} (the dev default).
@@ -78,6 +78,17 @@ public final class DaemonLauncher {
      * depend on the {@code daemon} module — the two ends agree on the name.
      */
     public static final String DAEMON_PLUGINS_DIR_PROPERTY = "sonar.plugins.dir";
+
+    /**
+     * System property carrying the socket-version token to the spawned daemon
+     * so it resolves the identical version-keyed socket/pidfile names this
+     * launcher polls. The value is exactly the {@link SocketPaths#version()} of
+     * the paths this launcher was constructed with — relayed verbatim, never
+     * recomputed, so the two ends cannot disagree. Kept as a literal here
+     * because the {@code cli} module must not depend on the {@code daemon}
+     * module — both ends agree on the name.
+     */
+    public static final String SOCKET_VERSION_PROPERTY = "sonar.socket.version";
 
     /** Default bounded wait for the daemon socket to start accepting. */
     public static final Duration DEFAULT_STARTUP_TIMEOUT = Duration.ofSeconds(60);
@@ -180,7 +191,8 @@ public final class DaemonLauncher {
         if (!Files.isRegularFile(jar)) {
             throw new IllegalStateException("daemon jar does not exist: " + jar);
         }
-        List<String> command = buildSpawnCommand(jar, resolveProvisionedLayout());
+        List<String> command =
+                buildSpawnCommand(jar, resolveProvisionedLayout(), paths.version());
         ProcessBuilder builder = new ProcessBuilder(command);
         // The daemon resolves its plugins/ directory relative to its working
         // directory; run it from the module root that holds plugins/.
@@ -201,7 +213,7 @@ public final class DaemonLauncher {
      * Builds the JVM command line that launches the daemon.
      *
      * <p><b>Java runtime.</b> When {@code -Dsonar.java.exe} is set — the skill
-     * bundle's {@code bin/sonar} launcher sets it to the Java 17+ runtime it
+     * bundle's {@code bin/sonar} launcher sets it to the Java 21+ runtime it
      * auto-discovered — the daemon spawns with that executable. Absent, the
      * daemon launches with the current JVM's {@code java} (the dev default).
      *
@@ -214,16 +226,23 @@ public final class DaemonLauncher {
      * daemon resolves a {@code plugins/} directory relative to its working
      * directory.
      *
-     * @param jar         the daemon fat jar to run
-     * @param provisioned a fully provisioned runtime layout, or {@code null}
+     * @param jar           the daemon fat jar to run
+     * @param provisioned   a fully provisioned runtime layout, or {@code null}
+     * @param socketVersion the socket-version token to relay via
+     *                      {@code -Dsonar.socket.version}; {@code null}/blank
+     *                      omits it (the daemon then uses the bare socket name)
      * @return the command line for {@link ProcessBuilder}
      */
-    static List<String> buildSpawnCommand(Path jar, RuntimeLayout provisioned) {
+    static List<String> buildSpawnCommand(
+            Path jar, RuntimeLayout provisioned, String socketVersion) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
         String pluginsDir = resolvePluginsDir(provisioned);
         if (pluginsDir != null) {
             command.add("-D" + DAEMON_PLUGINS_DIR_PROPERTY + "=" + pluginsDir);
+        }
+        if (socketVersion != null && !socketVersion.isBlank()) {
+            command.add("-D" + SOCKET_VERSION_PROPERTY + "=" + socketVersion);
         }
         command.add("-jar");
         command.add(jar.toString());

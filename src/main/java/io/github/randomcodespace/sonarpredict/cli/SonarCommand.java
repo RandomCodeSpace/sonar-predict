@@ -52,7 +52,7 @@ import picocli.CommandLine.Spec;
         exitCodeList = {
                 "0:clean — no issues at or above the severity floor",
                 "1:issues found / coverage below threshold",
-                "2:tool error — bad input, daemon unreachable, no Java 17+"},
+                "2:tool error — bad input, daemon unreachable, no Java 21+"},
         footerHeading = "%nExamples:%n",
         footer = {
                 "  Check the current git changeset (primary agent path):",
@@ -128,7 +128,7 @@ public final class SonarCommand implements Runnable {
 
     /** Production constructor: real socket-backed collaborators. */
     public SonarCommand() {
-        SocketPaths paths = SocketPaths.resolve();
+        SocketPaths paths = SocketPaths.resolve(System.getenv(), bundleSocketVersion());
         DaemonLauncher launcher = new DaemonLauncher(paths);
         this.rpc = new DaemonClient(paths, launcher);
         this.control = new LauncherDaemonControl(paths, launcher);
@@ -138,6 +138,23 @@ public final class SonarCommand implements Runnable {
     public SonarCommand(DaemonRpc rpc, DaemonControl control) {
         this.rpc = Objects.requireNonNull(rpc, "rpc");
         this.control = Objects.requireNonNull(control, "control");
+    }
+
+    /**
+     * The bundle's engine version, keyed into the daemon socket name so a CLI
+     * from one bundle never adopts a daemon spawned by a different bundle
+     * version (which would silently serve stale analyzers across an in-place
+     * upgrade). Empty when the manifest is unavailable (dev/test runs) — the
+     * socket name is then the bare {@code sonar-daemon}, preserving the prior
+     * single-daemon-per-machine behaviour.
+     */
+    private static String bundleSocketVersion() {
+        try {
+            return io.github.randomcodespace.sonarpredict.cli.setup.Manifest
+                    .bundled().version();
+        } catch (RuntimeException unavailable) {
+            return "";
+        }
     }
 
     /** With no subcommand, print usage. */

@@ -136,7 +136,7 @@ class DaemonLauncherTest {
         assertTrue(layout.isProvisioned(), "the stub layout must be provisioned");
 
         Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
-        var command = DaemonLauncher.buildSpawnCommand(daemonJar, layout);
+        var command = DaemonLauncher.buildSpawnCommand(daemonJar, layout, "");
 
         assertFalse(command.get(0).startsWith(dir.toString()),
                 "a provisioned launch must use the system java, not a bundled JRE, got: "
@@ -153,13 +153,30 @@ class DaemonLauncherTest {
     @DisplayName("with no provisioned runtime the dev default uses the system JVM")
     void devDefaultDrivesTheSpawnCommand(@TempDir Path dir) throws Exception {
         Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
-        var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+        var command = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
 
         assertFalse(command.stream().anyMatch(
                         arg -> arg.startsWith("-D" + DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY)),
                 "the dev default must not pin sonar.plugins.dir, got: " + command);
         assertTrue(command.contains("-jar") && command.contains(daemonJar.toString()),
                 "the command must run the daemon jar");
+    }
+
+    @Test
+    @DisplayName("a non-blank socket version is relayed as -Dsonar.socket.version")
+    void socketVersionRelayedToSpawnCommand(@TempDir Path dir) throws Exception {
+        Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
+
+        var versioned = DaemonLauncher.buildSpawnCommand(daemonJar, null, "11.3.0.85510");
+        assertTrue(versioned.contains(
+                        "-D" + DaemonLauncher.SOCKET_VERSION_PROPERTY + "=11.3.0.85510"),
+                "a versioned launch must relay -Dsonar.socket.version, got: " + versioned);
+
+        var unversioned = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
+        assertFalse(unversioned.stream().anyMatch(
+                        arg -> arg.startsWith("-D" + DaemonLauncher.SOCKET_VERSION_PROPERTY)),
+                "an unversioned launch must not relay -Dsonar.socket.version, got: "
+                        + unversioned);
     }
 
     @Test
@@ -170,7 +187,7 @@ class DaemonLauncherTest {
         String previous = System.getProperty(DaemonLauncher.JAVA_EXE_PROPERTY);
         System.setProperty(DaemonLauncher.JAVA_EXE_PROPERTY, bundledJava.toString());
         try {
-            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
 
             assertEquals(bundledJava.toString(), command.get(0),
                     "the spawn command must use the java named by sonar.java.exe, got: "
@@ -192,7 +209,7 @@ class DaemonLauncherTest {
         String previous = System.getProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY);
         System.setProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY, pluginsDir.toString());
         try {
-            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
 
             assertTrue(command.contains(
                             "-D" + DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY + "="

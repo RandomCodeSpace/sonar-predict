@@ -111,6 +111,51 @@ class SocketPathsTest {
         assertTrue(paths.pidFile().getFileName().toString().endsWith(".pid"));
     }
 
+    @Test
+    @DisplayName("a supplied version keys the socket/pidfile/lockfile names")
+    void versionKeysTheNames() {
+        Path runtime = Path.of("/run/user/1000");
+        SocketPaths paths = SocketPaths.resolve(
+                Map.of("XDG_RUNTIME_DIR", runtime.toString()), "11.3.0.85510");
+
+        assertEquals("sonar-daemon-11.3.0.85510.sock",
+                paths.socket().getFileName().toString(),
+                "the socket name must carry the version token");
+        assertEquals("sonar-daemon-11.3.0.85510.pid",
+                paths.pidFile().getFileName().toString());
+        assertEquals("sonar-daemon-11.3.0.85510.lock",
+                paths.lockFile().getFileName().toString());
+        assertEquals("11.3.0.85510", paths.version(),
+                "resolved paths must expose their version token for the launcher to relay");
+    }
+
+    @Test
+    @DisplayName("a blank version yields the bare unversioned names (back-compat)")
+    void blankVersionYieldsBareNames() {
+        Map<String, String> env = Map.of("XDG_RUNTIME_DIR", "/run/user/1000");
+        SocketPaths blank = SocketPaths.resolve(env, "  ");
+
+        assertEquals("sonar-daemon.sock", blank.socket().getFileName().toString(),
+                "a blank version must fall back to the bare socket name");
+        assertEquals("", blank.version(), "a blank version must expose an empty token");
+        assertEquals(SocketPaths.resolve(env).socket(), blank.socket(),
+                "blank-version and no-version resolution must agree");
+    }
+
+    @Test
+    @DisplayName("a version with path separators is sanitized to a single safe segment")
+    void versionIsSanitizedToSingleSegment() {
+        Path runtime = Path.of("/run/user/1000");
+        SocketPaths paths = SocketPaths.resolve(
+                Map.of("XDG_RUNTIME_DIR", runtime.toString()), "1.0/evil sub");
+
+        assertEquals(runtime, paths.socket().getParent(),
+                "a malicious version must not escape the runtime directory");
+        String name = paths.socket().getFileName().toString();
+        assertTrue(name.startsWith("sonar-daemon-") && name.endsWith(".sock"),
+                "name must remain a single sonar-daemon-*.sock segment, got: " + name);
+    }
+
     private static String stem(String name) {
         int dot = name.lastIndexOf('.');
         return dot < 0 ? name : name.substring(0, dot);
