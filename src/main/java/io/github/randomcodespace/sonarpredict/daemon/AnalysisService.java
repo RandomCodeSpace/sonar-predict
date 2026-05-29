@@ -223,10 +223,32 @@ public final class AnalysisService implements AutoCloseable {
     private AnalyzeResponse analyzeLocked(AnalyzeRequest request) {
         Path baseDir = Path.of(request.baseDir()).toAbsolutePath().normalize();
 
-        List<FileInputFile> inputFiles = new ArrayList<>();
         List<AnalysisWarning> warnings = new ArrayList<>();
         Set<SonarLanguage> presentLanguages = new java.util.HashSet<>();
 
+        List<FileInputFile> inputFiles =
+                collectInputFiles(request, baseDir, warnings, presentLanguages);
+
+        AnalysisConfiguration analysisConfig =
+                buildAnalysisConfig(request, baseDir, inputFiles, presentLanguages, warnings);
+
+        return runEngine(analysisConfig, baseDir, warnings);
+    }
+
+    /**
+     * Detects, validates, and classifies each requested file, returning the
+     * engine input files. Recognized-but-unloaded languages, unsupported file
+     * types, and base-directory escapes are skipped, each appending a
+     * {@link AnalysisWarning} to {@code warnings}; every accepted file's
+     * language is added to {@code presentLanguages}. Both collectors are
+     * mutated in place in request-file order.
+     */
+    private List<FileInputFile> collectInputFiles(
+            AnalyzeRequest request,
+            Path baseDir,
+            List<AnalysisWarning> warnings,
+            Set<SonarLanguage> presentLanguages) {
+        List<FileInputFile> inputFiles = new ArrayList<>();
         for (String relative : request.files()) {
             Optional<SonarLanguage> language = LanguageDetector.detect(relative);
             if (language.isEmpty()) {
@@ -246,7 +268,7 @@ public final class AnalysisService implements AutoCloseable {
                 continue;
             }
             Path file = baseDir.resolve(relative).toAbsolutePath().normalize();
-            if (!isWithinBaseDir(relative, file, baseDir)) {
+            if (!BaseDirGuard.isWithinBaseDir(relative, file, baseDir)) {
                 // A direct socket client could send an absolute path, a '..'
                 // escape, or any name resolving outside baseDir to read files
                 // the daemon was never asked to analyze. Reject and warn —
@@ -261,13 +283,27 @@ public final class AnalysisService implements AutoCloseable {
             inputFiles.add(new FileInputFile(file, baseDir, language.get(), isTest));
             presentLanguages.add(language.get());
         }
+        return inputFiles;
+    }
 
+    /**
+     * Resolves the active rules — from the request's imported profile when one
+     * is given, otherwise the per-language Sonar way defaults (which may append
+     * "no rule set" warnings to {@code warnings}) — and assembles the engine
+     * {@link AnalysisConfiguration} for {@code inputFiles}.
+     */
+    private AnalysisConfiguration buildAnalysisConfig(
+            AnalyzeRequest request,
+            Path baseDir,
+            List<FileInputFile> inputFiles,
+            Set<SonarLanguage> presentLanguages,
+            List<AnalysisWarning> warnings) {
         List<ActiveRule> activeRules = request.profileRef() != null
                 ? profileRulesFrom(request.profileRef())
                 : resolveActiveRules(
                         sonarWayProfiles, ruleParameterDefaults, presentLanguages, warnings);
 
-        AnalysisConfiguration analysisConfig = AnalysisConfiguration.builder()
+        return AnalysisConfiguration.builder()
                 .setBaseDir(baseDir)
                 .addInputFiles(inputFiles)
                 .addActiveRules(activeRules)
@@ -275,7 +311,18 @@ public final class AnalysisService implements AutoCloseable {
                 .putExtraProperty("sonar.java.binaries", baseDir.toString())
                 .putExtraProperty("sonar.java.libraries", "")
                 .build();
+    }
 
+    /**
+     * Posts the analysis to the warm engine scheduler, awaits the result, maps
+     * the raw issues to protocol DTOs, and appends the failed-file and
+     * swallowed-sensor-crash warnings to {@code warnings} before returning the
+     * response. Runs holding {@link #analysisLock}.
+     */
+    private AnalyzeResponse runEngine(
+            AnalysisConfiguration analysisConfig,
+            Path baseDir,
+            List<AnalysisWarning> warnings) {
         List<Issue> rawIssues = new ArrayList<>();
         AnalyzeCommand command = new AnalyzeCommand(
                 "daemon-module",
@@ -331,55 +378,6 @@ public final class AnalysisService implements AutoCloseable {
         }
 
         return new AnalyzeResponse(List.copyOf(issues), List.copyOf(warnings));
-    }
-
-    /**
-     * Whether a request file resolves to a real path inside {@code baseDir}.
-     *
-     * <p>Three guards, all required: the supplied {@code relative} name must
-     * not be an absolute path, must contain no {@code ..} segment, and the
-     * file's <em>real</em> path — symlinks resolved — must lie under the real
-     * {@code baseDir}. The first two reject the obvious traversal payloads
-     * before any filesystem touch; the third is the backstop.
-     *
-     * <p>The containment check uses {@link Path#toRealPath()}, not a lexical
-     * {@link Path#startsWith(Path)} on {@code normalize()}-d paths.
-     * {@code normalize()} only collapses {@code .} and {@code ..} textually —
-     * it does not follow symbolic links. A symlink inside the project tree
-     * pointing <em>outside</em> {@code baseDir} therefore passes a lexical
-     * check yet reads an arbitrary target file; resolving real paths closes
-     * that escape. {@code toRealPath()} throwing — a non-existent file, a
-     * broken symlink, or a missing {@code baseDir} — is treated as "not
-     * contained": the file is rejected and the caller warns and skips it,
-     * rather than the request crashing.
-     *
-     * @param relative the raw file name from the request
-     * @param resolved the absolute, normalized path it resolved to
-     * @param baseDir  the absolute, normalized analysis base directory
-     * @return {@code true} only if the file is safely contained in {@code baseDir}
-     */
-    private static boolean isWithinBaseDir(String relative, Path resolved, Path baseDir) {
-        Path rawRelative = Path.of(relative);
-        if (rawRelative.isAbsolute()) {
-            return false;
-        }
-        for (Path segment : rawRelative) {
-            if ("..".equals(segment.toString())) {
-                return false;
-            }
-        }
-        try {
-            // Resolve symlinks on both sides: a symlinked component could
-            // otherwise point the file outside the tree while still passing
-            // a purely lexical startsWith() check.
-            Path realBase = baseDir.toRealPath();
-            Path realResolved = resolved.toRealPath();
-            return realResolved.startsWith(realBase);
-        } catch (IOException e) {
-            // A non-existent file, a broken symlink, or a missing baseDir:
-            // cannot prove containment, so reject — the caller skips and warns.
-            return false;
-        }
     }
 
     /**
