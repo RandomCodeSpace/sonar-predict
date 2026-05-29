@@ -193,6 +193,22 @@
             </plugin>
 
             <!--
+              Surefire fork timeout backstop. The per-test method timeout in
+              src/test/resources/junit-platform.properties fails an individual
+              hung test fast; this is the outer guard for a wedged fork as a
+              whole (e.g. a daemon that never returns its socket). 900s is
+              generous — far above the slowest real test — so a normal
+              `mvn -B verify` is unaffected. Version tracks pluginManagement.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
+                </configuration>
+            </plugin>
+
+            <!--
               Bind the primary jar to process-classes (instead of the default
               package phase). The shade executions below run in
               process-test-classes (before test), and they consume the primary
@@ -462,6 +478,46 @@
     </build>
 
     <profiles>
+        <!--
+          CycloneDX SBOM generation. Deliberately profile-gated (NOT in the
+          default lifecycle): a plain `mvn verify` never runs this, so the
+          developer build is unchanged and stays offline. Produces
+          target/sonar-predictor-<version>-bom.{json,xml} via
+          `mvn -Psbom package` (the makeAggregateBom goal binds to the
+          `package` phase). CI's security job invokes it to feed the SBOM to
+          the osv-scanner CVE gate and attach it as an artifact; the release
+          can produce it the same way. cyclonedx-maven-plugin 2.9.1 is the
+          latest stable (verified on Maven Central).
+        -->
+        <profile>
+            <id>sbom</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-maven-plugin</artifactId>
+                        <version>2.9.1</version>
+                        <executions>
+                            <execution>
+                                <id>make-bom</id>
+                                <phase>package</phase>
+                                <goals><goal>makeAggregateBom</goal></goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <outputName>sonar-predictor-${project.version}-bom</outputName>
+                            <!-- Emit both formats: JSON is what osv-scanner
+                                 consumes in CI; XML is handy for tooling that
+                                 prefers it. -->
+                            <outputFormat>all</outputFormat>
+                            <projectType>application</projectType>
+                            <schemaVersion>1.5</schemaVersion>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <!--
           Maven Central publishing. Active only for the release build
           (`mvn -Prelease deploy`), which runs in CI on a `v*` tag.
