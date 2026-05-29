@@ -9,6 +9,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege for GITHUB_TOKEN across every job (CodeQL S6504): these jobs
+# only read the repo. The security job keeps its own explicit (identical) block.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
