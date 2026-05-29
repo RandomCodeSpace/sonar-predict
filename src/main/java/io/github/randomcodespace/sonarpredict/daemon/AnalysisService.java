@@ -600,18 +600,6 @@ public final class AnalysisService implements AutoCloseable {
     }
 
     /**
-     * Repository-key → SonarLanguage-key fallbacks, for profile rules whose
-     * key is not in the rule catalog. The catalog is consulted first; this map
-     * only covers the SonarSource analyzer repos whose name differs from the
-     * language key.
-     */
-    private static final Map<String, String> REPO_TO_LANGUAGE_KEY = Map.of(
-            "python", SonarLanguage.PYTHON.getSonarLanguageKey(),
-            "javascript", SonarLanguage.JS.getSonarLanguageKey(),
-            "typescript", SonarLanguage.TS.getSonarLanguageKey(),
-            "Web", SonarLanguage.HTML.getSonarLanguageKey());
-
-    /**
      * Builds the active rules from an imported SonarQube quality profile.
      * Each profile rule becomes an {@link ActiveRule} carrying the analyzer's
      * registered parameter defaults overlaid with the profile's own parameters;
@@ -657,7 +645,7 @@ public final class AnalysisService implements AutoCloseable {
             return null;
         }
         String repo = ruleKey.substring(0, colon);
-        return REPO_TO_LANGUAGE_KEY.getOrDefault(repo, repo);
+        return LanguageMap.protocolLanguageKey(repo);
     }
 
     private static Path createWorkDir() {

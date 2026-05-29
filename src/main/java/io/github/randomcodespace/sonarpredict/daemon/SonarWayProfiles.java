@@ -55,40 +55,6 @@ public final class SonarWayProfiles {
     private static final Pattern PROFILE_JSON = Pattern.compile(
             "^org/sonar/l10n/[^/]+/rules/([^/]+)/Sonar_way_profile\\.json$");
 
-    /**
-     * Rule-repository directory → the {@link SonarLanguage}s whose files the
-     * engine analyzes with that repository's rules. {@code javascript} serves
-     * both JS and TS; every other repo serves a single language.
-     */
-    private static final Map<String, Set<SonarLanguage>> REPO_TO_LANGUAGES = Map.of(
-            "java", Set.of(SonarLanguage.JAVA),
-            "python", Set.of(SonarLanguage.PYTHON),
-            "javascript", Set.of(SonarLanguage.JS, SonarLanguage.TS),
-            "css", Set.of(SonarLanguage.CSS),
-            "php", Set.of(SonarLanguage.PHP),
-            "kotlin", Set.of(SonarLanguage.KOTLIN),
-            "go", Set.of(SonarLanguage.GO),
-            "ruby", Set.of(SonarLanguage.RUBY),
-            "scala", Set.of(SonarLanguage.SCALA),
-            "xml", Set.of(SonarLanguage.XML));
-
-    /** {@code Web} is the HTML analyzer's repo; kept separate so the map above stays ≤10 entries. */
-    private static final Map<String, Set<SonarLanguage>> WEB_REPO =
-            Map.of("Web", Set.of(SonarLanguage.HTML));
-
-    /**
-     * Engine rule-key repository prefix for a language, when it differs from
-     * the profile-resource directory the rules were read from.
-     *
-     * <p>Only {@link SonarLanguage#TS} needs this: its rules live in the
-     * {@code javascript} profile resource, but the JavaScript analyzer's
-     * TypeScript sensor activates them from the {@code typescript} rule
-     * repository. Every other language's engine repository equals its
-     * resource directory, so it is absent here.
-     */
-    private static final Map<SonarLanguage, String> ENGINE_REPO_OVERRIDE =
-            Map.of(SonarLanguage.TS, "typescript");
-
     private final Map<SonarLanguage, List<String>> ruleKeysByLanguage;
 
     private SonarWayProfiles(Map<SonarLanguage, List<String>> ruleKeysByLanguage) {
@@ -143,7 +109,7 @@ public final class SonarWayProfiles {
                     continue;
                 }
                 String repo = m.group(1);
-                Set<SonarLanguage> languages = languagesFor(repo);
+                Set<SonarLanguage> languages = LanguageMap.servedLanguages(repo);
                 if (languages.isEmpty()) {
                     continue;
                 }
@@ -152,7 +118,7 @@ public final class SonarWayProfiles {
                     // The engine rule-key prefix is the resource-directory repo,
                     // unless the language overrides it (TypeScript: rules read
                     // from the `javascript` resource, activated under `typescript`).
-                    String engineRepo = ENGINE_REPO_OVERRIDE.getOrDefault(language, repo);
+                    String engineRepo = LanguageMap.engineRepo(language, repo);
                     List<String> ruleKeys = prefix(bareKeys, engineRepo);
                     byLanguage.merge(language, ruleKeys, SonarWayProfiles::mergeDistinct);
                 }
@@ -160,14 +126,6 @@ public final class SonarWayProfiles {
         } catch (IOException e) {
             throw new UncheckedIOException("could not read plugin JAR: " + jarPath, e);
         }
-    }
-
-    private static Set<SonarLanguage> languagesFor(String repo) {
-        Set<SonarLanguage> languages = REPO_TO_LANGUAGES.get(repo);
-        if (languages != null) {
-            return languages;
-        }
-        return WEB_REPO.getOrDefault(repo, Set.of());
     }
 
     private static List<String> mergeDistinct(List<String> existing, List<String> added) {

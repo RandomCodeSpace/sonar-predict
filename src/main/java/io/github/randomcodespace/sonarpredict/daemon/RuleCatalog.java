@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
@@ -43,24 +42,6 @@ import io.github.randomcodespace.sonarpredict.protocol.dto.RuleMetadata;
  * imported third-party linter repos (pmd, eslint, detekt, …) are skipped.
  */
 public final class RuleCatalog {
-
-    /**
-     * SonarSource analyzer rule-repository directory names (the {@code <repo>}
-     * segment, which is also the rule-key prefix the engine emits).
-     */
-    private static final Set<String> ANALYZER_REPOS = Set.of(
-            "java", "python", "javascript", "typescript", "css",
-            "php", "kotlin", "go", "ruby", "scala", "Web", "xml");
-
-    /**
-     * Maps a rule-repository directory to the {@code RuleMetadata.language}
-     * value (the SonarLanguage key). Repos absent here use the repo name.
-     */
-    private static final Map<String, String> REPO_TO_LANGUAGE = Map.of(
-            "python", "py",
-            "javascript", "js",
-            "typescript", "ts",
-            "Web", "web");
 
     /** Matches {@code org/sonar/l10n/<l10n>/rules/<repo>/<sqKey>.json}. */
     private static final Pattern RULE_JSON = Pattern.compile(
@@ -140,7 +121,7 @@ public final class RuleCatalog {
                 }
                 String repo = m.group(1);
                 String sqKey = m.group(2);
-                if (!ANALYZER_REPOS.contains(repo)) {
+                if (!LanguageMap.analyzerRepos().contains(repo)) {
                     continue;
                 }
                 RuleMetadata md = readRule(jar, entry, repo, sqKey);
@@ -189,7 +170,7 @@ public final class RuleCatalog {
         }
         String ruleKey = repo + ":" + sqKey;
         String name = text(json, "title", sqKey);
-        String language = REPO_TO_LANGUAGE.getOrDefault(repo, repo);
+        String language = LanguageMap.protocolLanguageKey(repo);
         String severity = normalizeSeverity(text(json, "defaultSeverity", null));
         String type = normalizeType(text(json, "type", null));
         String descriptionHtml = readHtml(jar, jsonEntry.getName());
