@@ -193,9 +193,10 @@ jobs:
   # plugins/ analyzer copies over the network, then proves `mvn -o clean
   # verify` succeeds with NO network access. dependency:go-offline alone is
   # insufficient: the maven-dependency-plugin `copy` executions fetch the 10
-  # analyzer jars (and the host jar is built locally), so a normal
-  # `-DskipTests package` is run first to populate ~/.m2 and plugins/ before
-  # the offline verify.
+  # analyzer jars (and the host jar is built locally), and Surefire resolves
+  # its JUnit-platform provider only when tests actually run — so a full
+  # `verify` (tests included) is run first to populate ~/.m2 and plugins/
+  # before the offline verify.
   offline-build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -215,15 +216,19 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Warm local repo (resolve plugins, deps, analyzer copies)
+      - name: Warm local repo (resolve plugins, deps, analyzer copies, test providers)
         run: |
           set -euo pipefail
           # Resolve the plugin/dependency graph...
           mvn -B -ntp dependency:go-offline
-          # ...then a full package to populate ~/.m2 with the analyzer jars
-          # pulled by the dependency:copy executions and to build the local
-          # host/shade jars the assembly needs.
-          mvn -B -ntp -DskipTests package
+          # ...then a FULL verify (tests included) to populate ~/.m2 with the
+          # analyzer jars pulled by the dependency:copy executions, the local
+          # host/shade jars the assembly needs, AND Surefire's lazily-resolved
+          # JUnit-platform provider. dependency:go-offline does NOT fetch that
+          # provider and -DskipTests never triggers it, so without running the
+          # tests here the offline verify below fails resolving
+          # surefire-junit-platform.
+          mvn -B -ntp verify
 
       - name: Offline verify (no network)
         run: |
