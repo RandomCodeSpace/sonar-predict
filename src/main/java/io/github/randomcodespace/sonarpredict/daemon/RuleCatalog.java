@@ -4,17 +4,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -44,24 +41,6 @@ import io.github.randomcodespace.sonarpredict.protocol.dto.RuleMetadata;
  */
 public final class RuleCatalog {
 
-    /**
-     * SonarSource analyzer rule-repository directory names (the {@code <repo>}
-     * segment, which is also the rule-key prefix the engine emits).
-     */
-    private static final Set<String> ANALYZER_REPOS = Set.of(
-            "java", "python", "javascript", "typescript", "css",
-            "php", "kotlin", "go", "ruby", "scala", "Web", "xml");
-
-    /**
-     * Maps a rule-repository directory to the {@code RuleMetadata.language}
-     * value (the SonarLanguage key). Repos absent here use the repo name.
-     */
-    private static final Map<String, String> REPO_TO_LANGUAGE = Map.of(
-            "python", "py",
-            "javascript", "js",
-            "typescript", "ts",
-            "Web", "web");
-
     /** Matches {@code org/sonar/l10n/<l10n>/rules/<repo>/<sqKey>.json}. */
     private static final Pattern RULE_JSON = Pattern.compile(
             "^org/sonar/l10n/[^/]+/rules/([^/]+)/([^/]+)\\.json$");
@@ -71,8 +50,24 @@ public final class RuleCatalog {
 
     private final Map<String, RuleMetadata> rulesByKey;
 
+    /**
+     * The full catalog ({@link #all()}) pre-serialized to a JSON tree once at
+     * construction. The catalog is immutable for the life of this instance
+     * (plugins load once), so {@code RULE_METADATA} full-catalog requests can
+     * reuse this node instead of re-sorting and re-serializing every rule's
+     * multi-KB HTML on each request.
+     *
+     * <p>Built eagerly so it is fully published by the time any thread can call
+     * {@link #allAsJsonNode()} — no lazy double-checked init, no data race. It is
+     * read-only after construction (no method mutates it); the only consumer is
+     * the protocol serializer, which never writes to it, so sharing the instance
+     * across socket threads is safe.
+     */
+    private final JsonNode allAsJsonNode;
+
     private RuleCatalog(Map<String, RuleMetadata> rulesByKey) {
         this.rulesByKey = Map.copyOf(rulesByKey);
+        this.allAsJsonNode = Json.mapper().valueToTree(all());
     }
 
     /**
@@ -84,22 +79,7 @@ public final class RuleCatalog {
      */
     public static RuleCatalog fromPluginsDir(Path pluginsDir) {
         Map<String, RuleMetadata> rules = new HashMap<>();
-        int jarCount = 0;
-        try (Stream<Path> entries = Files.list(pluginsDir)) {
-            for (Path jar : entries
-                    .filter(p -> p.getFileName().toString().endsWith(".jar"))
-                    .toList()) {
-                jarCount++;
-                indexJar(jar, rules);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(
-                    "could not list plugins directory: " + pluginsDir.toAbsolutePath(), e);
-        }
-        if (jarCount == 0) {
-            throw new IllegalStateException(
-                    "no analyzer plugin JARs in " + pluginsDir.toAbsolutePath());
-        }
+        PluginsDir.forEachJar(pluginsDir, jar -> indexJar(jar, rules));
         addTypeScriptAliases(rules);
         return new RuleCatalog(rules);
     }
@@ -124,7 +104,7 @@ public final class RuleCatalog {
                 }
                 String repo = m.group(1);
                 String sqKey = m.group(2);
-                if (!ANALYZER_REPOS.contains(repo)) {
+                if (!LanguageMap.analyzerRepos().contains(repo)) {
                     continue;
                 }
                 RuleMetadata md = readRule(jar, entry, repo, sqKey);
@@ -173,7 +153,7 @@ public final class RuleCatalog {
         }
         String ruleKey = repo + ":" + sqKey;
         String name = text(json, "title", sqKey);
-        String language = REPO_TO_LANGUAGE.getOrDefault(repo, repo);
+        String language = LanguageMap.protocolLanguageKey(repo);
         String severity = normalizeSeverity(text(json, "defaultSeverity", null));
         String type = normalizeType(text(json, "type", null));
         String descriptionHtml = readHtml(jar, jsonEntry.getName());
@@ -240,6 +220,20 @@ public final class RuleCatalog {
         return rulesByKey.values().stream()
                 .sorted(java.util.Comparator.comparing(RuleMetadata::ruleKey))
                 .toList();
+    }
+
+    /**
+     * The full catalog ({@link #all()}) as a pre-serialized, memoized JSON tree.
+     *
+     * <p>Byte-equivalent to serializing {@link #all()} on demand, but built once
+     * at construction so repeated full-catalog {@code RULE_METADATA} requests do
+     * not re-serialize every rule. The returned node is shared and must be
+     * treated as read-only; callers hand it straight to the serializer.
+     *
+     * @return the memoized full-catalog JSON tree (an array of {@code RuleMetadata})
+     */
+    public JsonNode allAsJsonNode() {
+        return allAsJsonNode;
     }
 
     /** {@code true} if the catalog holds no rules. */

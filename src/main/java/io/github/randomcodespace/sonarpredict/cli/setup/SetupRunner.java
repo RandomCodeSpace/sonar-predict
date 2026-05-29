@@ -5,7 +5,10 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 /**
  * Orchestrates {@code sonar setup}: provisions the analyzer plugins and the
@@ -85,20 +88,74 @@ public final class SetupRunner {
         if (!Files.isRegularFile(bundle)) {
             throw new DownloadException("offline archive not found: " + bundle);
         }
+        // Idempotent: an already-complete, verified runtime is left untouched
+        // (mirrors provision()), so we never re-extract over a good runtime.
+        if (layout.isVerified(manifest)) {
+            out.println("runtime already provisioned and verified: " + layout.versionDir());
+            out.flush();
+            return;
+        }
         out.println("provisioning runtime " + manifest.version()
                 + " from offline archive " + bundle);
-        try (InputStream in = Files.newInputStream(bundle)) {
-            Tar.extractTarGz(in, layout.versionDir(), false);
+
+        // Extract into a sibling staging directory and verify it there; only a
+        // fully verified runtime is renamed onto the version directory. On any
+        // failure the staging tree is removed, so unverified — and thus
+        // attacker-influenced — files never persist in, or partially populate,
+        // the real version directory (mirrors Downloader's verify-then-promote).
+        Path versionDir = layout.versionDir();
+        Path baseDir = versionDir.getParent();
+        Path stagingBase = null;
+        try {
+            Files.createDirectories(baseDir);
+            stagingBase = Files.createTempDirectory(
+                    baseDir, versionDir.getFileName() + ".staging-");
+            RuntimeLayout staging =
+                    new RuntimeLayout(stagingBase, versionDir.getFileName().toString());
+            try (InputStream in = Files.newInputStream(bundle)) {
+                Tar.extractTarGz(in, staging.versionDir(), false);
+            }
+            if (!staging.isVerified(manifest)) {
+                throw new DownloadException(
+                        "the offline archive did not yield a complete, verified runtime at "
+                                + versionDir);
+            }
+            // Promote: clear any prior partial/corrupt runtime, then rename the
+            // verified staging tree into place (same filesystem ⇒ atomic).
+            deleteRecursively(versionDir);
+            Files.move(staging.versionDir(), versionDir);
         } catch (IOException e) {
             throw new DownloadException(
                     "could not extract the offline archive: " + e.getMessage(), e);
+        } finally {
+            if (stagingBase != null) {
+                deleteRecursivelyQuietly(stagingBase);
+            }
         }
-        if (!layout.isVerified(manifest)) {
-            throw new DownloadException(
-                    "the offline archive did not yield a complete, verified runtime at "
-                            + layout.versionDir());
-        }
-        out.println("runtime ready: " + layout.versionDir());
+        out.println("runtime ready: " + versionDir);
         out.flush();
+    }
+
+    /** Recursively deletes {@code dir} (deepest first); a no-op if absent. */
+    private static void deleteRecursively(Path dir) throws IOException {
+        if (!Files.exists(dir)) {
+            return;
+        }
+        List<Path> paths;
+        try (Stream<Path> walk = Files.walk(dir)) {
+            paths = walk.sorted(Comparator.reverseOrder()).toList();
+        }
+        for (Path p : paths) {
+            Files.deleteIfExists(p);
+        }
+    }
+
+    /** Best-effort recursive delete for staging cleanup — never throws. */
+    private static void deleteRecursivelyQuietly(Path dir) {
+        try {
+            deleteRecursively(dir);
+        } catch (IOException ignored) {
+            // Cleanup failure must not mask the provisioning outcome.
+        }
     }
 }

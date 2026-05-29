@@ -112,8 +112,9 @@ public final class Daemon {
             // shutdown hook — routes through DaemonServer.stop(), which runs
             // this onStop callback before releasing awaitStopped(). The
             // callback closes the warm engine (deleting its work directory),
-            // removes the pidfile, and releases the startup lock, so no exit
-            // path can leave any of them behind or strand the lock held.
+            // removes the pidfile and the launcher's startup log, and releases
+            // the startup lock, so no exit path can leave any of them behind or
+            // strand the lock held.
             server.setOnStop(() -> {
                 engine.close();
                 try {
@@ -122,6 +123,11 @@ public final class Daemon {
                     // Best effort — a stale pidfile is detected and overwritten
                     // on the next start().
                 }
+                // Remove the launcher-written startup log so a clean start/stop
+                // leaves the runtime directory exactly as it was found. The
+                // name is a literal: the daemon module must not depend on the
+                // cli module's DaemonLauncher — both ends agree on "daemon.log".
+                deleteQuietly(paths.socket().getParent().resolve("daemon.log"));
                 releaseLock(startupLock, lockChannel);
             });
 

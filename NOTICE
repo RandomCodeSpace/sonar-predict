@@ -67,18 +67,20 @@ Build-time / direct-dependency Apache 2.0 components
   All Apache License 2.0.
 
 ------------------------------------------------------------------------------
-Runtime JRE auto-download (optional)
+Java runtime
 ------------------------------------------------------------------------------
 
-  When no Java 17+ runtime is found on the user's machine, the plugin's
-  bootstrap launcher fetches a JRE from the URL configured in
-  `plugin/skills/sonar-predictor/config.env`. The public default uses the
-  Adoptium Temurin API (https://api.adoptium.net), which serves Eclipse
-  Temurin OpenJDK builds under the GNU General Public License v2 with the
-  Classpath Exception (GPL-2.0 WITH Classpath-exception-2.0).
+  The shipped code provisions no JRE. The CLI and daemon run on the Java the
+  `bin/sonar` launcher discovers on the user's machine (`JAVA_HOME`, then
+  `PATH`, then common install locations); a Java 21+ runtime is required.
 
-  An air-gapped or corporate setup can replace this URL with a private JRE
-  mirror; the bootstrap does not require Adoptium specifically.
+  The OPTIONAL bootstrap wrappers `scripts/sonar-cli.sh` / `sonar-cli.ps1`
+  may, for an air-gapped or corporate install, fetch an Eclipse Temurin JDK
+  from a private Nexus base URL given by the `SONAR_NEXUS_BASE` environment
+  variable. Temurin OpenJDK builds are distributed under the GNU General
+  Public License v2 with the Classpath Exception (GPL-2.0 WITH
+  Classpath-exception-2.0). These wrappers are tooling, not part of the
+  installed runtime, and require no specific vendor.
 
 ================================================================================
 NOTES ON THE BUNDLED MAVEN CENTRAL ARTIFACT
@@ -95,5 +97,6 @@ individually from Maven Central using its published coordinates, so that
 SonarSource's own Maven Central distribution is the sole redistribution
 channel and `sonar-predict-dist-*.zip` no longer carries third-party JARs.
 This eliminates any redistribution question about the SSALv1-licensed
-analyzers. The plugin's `config.env` already isolates the Maven repository
-URL, so this transition is transparent to corporate Maven proxy setups.
+analyzers. The `setup --repo <url>` option and the wrappers' `SONAR_NEXUS_BASE`
+already isolate the repository base URL, so this transition is transparent to
+corporate Maven proxy / Nexus setups.

@@ -1,6 +1,8 @@
 package io.github.randomcodespace.sonarpredict.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -63,6 +65,24 @@ class SarifReporterTest {
         assertEquals("sonar-predictor", driver.get("name").asText(),
                 "the driver name must be sonar-predictor");
         assertNotNull(driver.get("rules"), "the driver must carry a 'rules' array");
+        assertEquals(SonarVersionProvider.version(), driver.get("version").asText(),
+                "the driver version must be the runtime build version");
+        assertNotEquals("0.1.0-SNAPSHOT", driver.get("version").asText(),
+                "the driver version must not report the stale 0.1.0 literal");
+    }
+
+    @Test
+    @DisplayName("the driver informationUri points at the current project repository")
+    void sarifDriverInformationUriIsCurrent() throws Exception {
+        String sarif = new SarifReporter().render(WITH_ISSUES);
+
+        JsonNode driver = Json.mapper().readTree(sarif)
+                .get("runs").get(0).get("tool").get("driver");
+        assertEquals("https://github.com/RandomCodeSpace/sonar-predict",
+                driver.get("informationUri").asText(),
+                "the informationUri must point at the repackaged project's repository");
+        assertFalse(driver.get("informationUri").asText().contains("sonarcli"),
+                "the informationUri must not reference the pre-repackage sonarcli org");
     }
 
     @Test

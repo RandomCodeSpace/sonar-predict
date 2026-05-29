@@ -3,6 +3,7 @@ package io.github.randomcodespace.sonarpredict.cli;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.UnixDomainSocketAddress;
@@ -136,7 +137,7 @@ class DaemonLauncherTest {
         assertTrue(layout.isProvisioned(), "the stub layout must be provisioned");
 
         Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
-        var command = DaemonLauncher.buildSpawnCommand(daemonJar, layout);
+        var command = DaemonLauncher.buildSpawnCommand(daemonJar, layout, "");
 
         assertFalse(command.get(0).startsWith(dir.toString()),
                 "a provisioned launch must use the system java, not a bundled JRE, got: "
@@ -153,13 +154,30 @@ class DaemonLauncherTest {
     @DisplayName("with no provisioned runtime the dev default uses the system JVM")
     void devDefaultDrivesTheSpawnCommand(@TempDir Path dir) throws Exception {
         Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
-        var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+        var command = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
 
         assertFalse(command.stream().anyMatch(
                         arg -> arg.startsWith("-D" + DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY)),
                 "the dev default must not pin sonar.plugins.dir, got: " + command);
         assertTrue(command.contains("-jar") && command.contains(daemonJar.toString()),
                 "the command must run the daemon jar");
+    }
+
+    @Test
+    @DisplayName("a non-blank socket version is relayed as -Dsonar.socket.version")
+    void socketVersionRelayedToSpawnCommand(@TempDir Path dir) throws Exception {
+        Path daemonJar = Files.createFile(dir.resolve("daemon.jar"));
+
+        var versioned = DaemonLauncher.buildSpawnCommand(daemonJar, null, "11.3.0.85510");
+        assertTrue(versioned.contains(
+                        "-D" + DaemonLauncher.SOCKET_VERSION_PROPERTY + "=11.3.0.85510"),
+                "a versioned launch must relay -Dsonar.socket.version, got: " + versioned);
+
+        var unversioned = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
+        assertFalse(unversioned.stream().anyMatch(
+                        arg -> arg.startsWith("-D" + DaemonLauncher.SOCKET_VERSION_PROPERTY)),
+                "an unversioned launch must not relay -Dsonar.socket.version, got: "
+                        + unversioned);
     }
 
     @Test
@@ -170,7 +188,7 @@ class DaemonLauncherTest {
         String previous = System.getProperty(DaemonLauncher.JAVA_EXE_PROPERTY);
         System.setProperty(DaemonLauncher.JAVA_EXE_PROPERTY, bundledJava.toString());
         try {
-            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
 
             assertEquals(bundledJava.toString(), command.get(0),
                     "the spawn command must use the java named by sonar.java.exe, got: "
@@ -192,7 +210,7 @@ class DaemonLauncherTest {
         String previous = System.getProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY);
         System.setProperty(DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY, pluginsDir.toString());
         try {
-            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null);
+            var command = DaemonLauncher.buildSpawnCommand(daemonJar, null, "");
 
             assertTrue(command.contains(
                             "-D" + DaemonLauncher.DAEMON_PLUGINS_DIR_PROPERTY + "="
@@ -222,6 +240,50 @@ class DaemonLauncherTest {
             } else {
                 System.setProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, previous);
             }
+        }
+    }
+
+    @Test
+    @DisplayName("a child that crashes before binding surfaces the captured daemon.log tail")
+    void startFailureSurfacesChildLogTail(@TempDir Path dir) throws Exception {
+        // Drive a deterministic startup failure: point sonar.daemon.jar at a
+        // file that is a regular file (so spawn()'s isRegularFile guard passes)
+        // but is NOT a runnable jar, so the child JVM exits non-zero writing
+        // "Invalid or corrupt jarfile" to stderr — captured into daemon.log.
+        Path notAJar = Files.writeString(dir.resolve("not-a.jar"), "this is not a jar\n");
+        Path workDir = Files.createDirectories(dir.resolve("work"));
+        Files.createDirectories(workDir.resolve("plugins"));
+
+        SocketPaths paths = SocketPaths.resolve(Map.of("XDG_RUNTIME_DIR", dir.toString()));
+        DaemonLauncher launcher = new DaemonLauncher(paths, Duration.ofSeconds(30));
+
+        String prevJar = System.getProperty(DaemonLauncher.DAEMON_JAR_PROPERTY);
+        String prevWorkDir = System.getProperty(DaemonLauncher.DAEMON_WORKDIR_PROPERTY);
+        System.setProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, notAJar.toString());
+        System.setProperty(DaemonLauncher.DAEMON_WORKDIR_PROPERTY, workDir.toString());
+        try {
+            IllegalStateException failure =
+                    assertThrows(IllegalStateException.class, launcher::start);
+
+            assertTrue(failure.getMessage().contains("daemon.log"),
+                    "the failure must name the captured log section, got: "
+                            + failure.getMessage());
+            assertTrue(failure.getMessage().toLowerCase(java.util.Locale.ROOT)
+                            .contains("jar"),
+                    "the failure must include the child's captured output (the JVM's "
+                            + "corrupt-jarfile error), not just a bare exit code, got: "
+                            + failure.getMessage());
+        } finally {
+            restoreProperty(DaemonLauncher.DAEMON_JAR_PROPERTY, prevJar);
+            restoreProperty(DaemonLauncher.DAEMON_WORKDIR_PROPERTY, prevWorkDir);
+        }
+    }
+
+    private static void restoreProperty(String key, String previous) {
+        if (previous == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, previous);
         }
     }
 

@@ -17,7 +17,7 @@ import io.github.randomcodespace.sonarpredict.protocol.dto.TextEdit;
  * Maps an engine {@link Issue} to the protocol {@link io.github.randomcodespace.sonarpredict.protocol.dto.Issue}.
  *
  * <p><b>Engine-API note:</b> the analysis-engine {@code Issue} (engine
- * 10.24.0.81415) exposes only {@code getRuleKey}, {@code getMessage},
+ * 11.3.0.85510) exposes only {@code getRuleKey}, {@code getMessage},
  * {@code getInputFile}, {@code getTextRange} and {@code getOverriddenImpacts}.
  * It carries <em>no</em> severity or type getter. Those are resolved here from
  * the {@link RuleCatalog}, which extracts them from the analyzer plugins'

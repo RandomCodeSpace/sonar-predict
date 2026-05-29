@@ -35,7 +35,7 @@ import picocli.CommandLine.Spec;
 @Command(
         name = "sonar",
         mixinStandardHelpOptions = true,
-        version = "sonar " + SonarCommand.VERSION,
+        versionProvider = SonarVersionProvider.class,
         description = {
                 "Run the sonar analysis quality gate.",
                 "",
@@ -52,7 +52,7 @@ import picocli.CommandLine.Spec;
         exitCodeList = {
                 "0:clean — no issues at or above the severity floor",
                 "1:issues found / coverage below threshold",
-                "2:tool error — bad input, daemon unreachable, no Java 17+"},
+                "2:tool error — bad input, daemon unreachable, no Java 21+"},
         footerHeading = "%nExamples:%n",
         footer = {
                 "  Check the current git changeset (primary agent path):",
@@ -84,8 +84,6 @@ public final class SonarCommand implements Runnable {
     public static final int EXIT_ISSUES = 1;
     /** Exit code for a tool error — bad input, daemon unreachable. */
     public static final int EXIT_TOOL_ERROR = 2;
-
-    static final String VERSION = "0.1.0-SNAPSHOT";
 
     @Option(names = "--format",
             description = "Output format: sarif, json, or text. Default: sarif.")
@@ -119,6 +117,10 @@ public final class SonarCommand implements Runnable {
                     "Removes the need for jq in agent wrappers."})
     private String savePath;
 
+    @Option(names = "--timings",
+            description = "Print the daemon analyze round-trip time to stderr.")
+    private boolean timings = false;
+
     @Spec
     private CommandSpec spec;
 
@@ -128,7 +130,7 @@ public final class SonarCommand implements Runnable {
 
     /** Production constructor: real socket-backed collaborators. */
     public SonarCommand() {
-        SocketPaths paths = SocketPaths.resolve();
+        SocketPaths paths = SocketPaths.resolve(System.getenv(), bundleSocketVersion());
         DaemonLauncher launcher = new DaemonLauncher(paths);
         this.rpc = new DaemonClient(paths, launcher);
         this.control = new LauncherDaemonControl(paths, launcher);
@@ -138,6 +140,23 @@ public final class SonarCommand implements Runnable {
     public SonarCommand(DaemonRpc rpc, DaemonControl control) {
         this.rpc = Objects.requireNonNull(rpc, "rpc");
         this.control = Objects.requireNonNull(control, "control");
+    }
+
+    /**
+     * The bundle's engine version, keyed into the daemon socket name so a CLI
+     * from one bundle never adopts a daemon spawned by a different bundle
+     * version (which would silently serve stale analyzers across an in-place
+     * upgrade). Empty when the manifest is unavailable (dev/test runs) — the
+     * socket name is then the bare {@code sonar-daemon}, preserving the prior
+     * single-daemon-per-machine behaviour.
+     */
+    private static String bundleSocketVersion() {
+        try {
+            return io.github.randomcodespace.sonarpredict.cli.setup.Manifest
+                    .bundled().version();
+        } catch (RuntimeException unavailable) {
+            return "";
+        }
     }
 
     /** With no subcommand, print usage. */
@@ -171,7 +190,15 @@ public final class SonarCommand implements Runnable {
                 additionalTestPaths != null
                         ? List.copyOf(additionalTestPaths)
                         : List.of());
+        long analyzeStartNanos = System.nanoTime();
         AnalyzeResponse response = rpc.analyze(request);
+        if (timings) {
+            // Timing goes to stderr only — stdout (the report / --save summary)
+            // stays byte-identical whether or not --timings is set.
+            long elapsedMs = (System.nanoTime() - analyzeStartNanos) / 1_000_000L;
+            spec.commandLine().getErr()
+                    .printf("sonar: analyze round-trip %d ms%n", elapsedMs);
+        }
 
         List<Issue> filtered = response.issues().stream()
                 .filter(issue -> severity.accepts(issue.severity()))
@@ -333,7 +360,7 @@ public final class SonarCommand implements Runnable {
 
         @Override
         public void run() {
-            parent.spec.commandLine().getOut().println("sonar " + VERSION);
+            parent.spec.commandLine().getOut().println("sonar " + SonarVersionProvider.version());
         }
     }
 

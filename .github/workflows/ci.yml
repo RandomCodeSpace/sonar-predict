@@ -9,22 +9,28 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege for GITHUB_TOKEN across every job (CodeQL S6504): these jobs
+# only read the repo. The security job keeps its own explicit (identical) block.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
 
       - name: Set up Node.js (JS/TS analyzer tests need a Node runtime)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.4.0
         with:
           node-version: '20'
 
@@ -32,3 +38,236 @@ jobs:
         # `verify`, not `test`: the cli integration tests spawn the daemon and
         # need its shaded fat jar, which is only built at the package phase.
         run: mvn -B -ntp verify
+
+  # Dependency CVE gate + SBOM. Runs independently of `test` so neither blocks
+  # the other. The SBOM is produced via the `-Psbom` Maven profile (off by
+  # default — a plain `mvn verify` never touches it), then scanned offline with
+  # osv-scanner against a cached vulnerability DB. Gate policy (security.md):
+  # HIGH/CRITICAL (CVSS base score >= 7.0) hard-fail the build; Medium/Low are
+  # surfaced in the logs but do NOT block (documented, not gated).
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # osv-scanner reads its local DB from here; we cache this directory so
+      # the NVD/OSV feed is fetched at most once per week, never per-run, and
+      # the scan itself runs with --offline-vulnerabilities (no live feed).
+      OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: ${{ github.workspace }}/.osv-db
+      OSV_SCANNER_VERSION: v2.3.8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Generate CycloneDX SBOM
+        # `package`, because the SBOM aggregates the resolved dependency graph;
+        # -Psbom is the only thing that activates the cyclonedx plugin. Skip
+        # tests here — the `test` job already runs them; we only need the graph.
+        run: mvn -B -ntp -Psbom -DskipTests package
+        # Plugins/ jars are fetched as part of package; resolution stays inside
+        # Maven (settings.xml mirrors / Nexus / proxy apply), as elsewhere.
+
+      - name: Cache OSV vulnerability database
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ${{ env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY }}
+          # Rotate weekly so the offline DB stays reasonably fresh without
+          # re-downloading on every run.
+          key: osv-db-${{ env.OSV_SCANNER_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            osv-db-${{ env.OSV_SCANNER_VERSION }}-
+
+      - name: Install osv-scanner (pinned)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/osv"
+          # --proto '=https' --tlsv1.2: enforce HTTPS through redirects too, so a
+          # downgrade to http can never serve the binary (satisfies S6506).
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/osv/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          chmod +x "$RUNNER_TEMP/osv/osv-scanner"
+          echo "$RUNNER_TEMP/osv" >> "$GITHUB_PATH"
+
+      - name: Scan dependencies (offline DB) and gate on HIGH/CRITICAL
+        run: |
+          set -uo pipefail
+          mkdir -p "$OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"
+          # outputName uses ${project.version}; resolve the actual emitted file.
+          SBOM=$(ls target/*-bom.json | head -n1)
+          if [ -z "${SBOM:-}" ] || [ ! -f "$SBOM" ]; then
+            echo "::error::CycloneDX SBOM not found under target/*-bom.json — cannot run the CVE gate."
+            exit 1
+          fi
+          # osv-scanner detects SBOM format from the FILENAME; '<name>-bom.json'
+          # is not a recognized CycloneDX name (it silently parses nothing), so
+          # copy to a recognized '.cdx.json' name before scanning.
+          SBOM_CDX="$RUNNER_TEMP/bom.cdx.json"
+          cp "$SBOM" "$SBOM_CDX"
+          echo "Scanning SBOM: $SBOM (as $SBOM_CDX)"
+          # --offline-vulnerabilities: never contacts the live feed during scan.
+          # --download-offline-databases: refresh the cached DB if cache missed.
+          # -L: lockfile/SBOM input (replaces the deprecated --sbom).
+          set +e
+          osv-scanner scan \
+            --offline-vulnerabilities \
+            --download-offline-databases \
+            --format json \
+            -L "$SBOM_CDX" > osv-results.json 2> osv-stderr.txt
+          OSV_EXIT=$?
+          set -e
+          cat osv-stderr.txt || true
+          # FAIL CLOSED: osv-scanner exits 0 (no vulns) or 1 (vulns found) on a
+          # real scan; any other exit code, a parse error, or a missing results
+          # object means NOTHING was scanned — the gate must fail, never pass on
+          # a non-scan (the bug this replaces let a non-scan pass green).
+          if [ "$OSV_EXIT" != "0" ] && [ "$OSV_EXIT" != "1" ]; then
+            echo "::error::osv-scanner did not complete a scan (exit $OSV_EXIT) — failing closed."
+            exit 1
+          fi
+          if grep -qiE "Failed to parse|invalid SBOM" osv-stderr.txt; then
+            echo "::error::osv-scanner could not ingest the SBOM — failing closed."
+            exit 1
+          fi
+          if ! jq -e 'has("results")' osv-results.json >/dev/null 2>&1; then
+            echo "::error::osv-scanner produced no results object — failing closed."
+            exit 1
+          fi
+          # Gate: max_severity is a CVSS base-score string per vulnerability
+          # group. >= 7.0 == HIGH or CRITICAL (CVSS v3). Anything below is
+          # non-blocking per security.md. An unscored group (null or "") is
+          # coerced to 0 so a missing CVSS never crashes or trips the gate.
+          SEV='((.max_severity // "0") | if . == "" then "0" else . end | tonumber)'
+          HIGH=$(jq "[.results[]?.packages[]?.groups[]? | ${SEV} | select(. >= 7.0)] | length" osv-results.json)
+          echo "HIGH/CRITICAL findings (CVSS >= 7.0): ${HIGH:-0}"
+          jq -r ".results[]?.packages[]? | .package as \$p | .groups[]? | ${SEV} as \$s | select(\$s >= 7.0) | \"  BLOCK \(\$p.name)@\(\$p.version) CVSS=\(.max_severity) \(.ids | join(\",\"))\"" osv-results.json || true
+          if [ "${HIGH:-0}" -gt 0 ]; then
+            echo "::error::${HIGH} HIGH/CRITICAL dependency vulnerabilit(ies) found — failing per security policy."
+            exit 1
+          fi
+          echo "No HIGH/CRITICAL dependency vulnerabilities. (Medium/Low, if any, are non-blocking.)"
+
+      - name: Upload SBOM + scan results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-and-cve-scan
+          path: |
+            target/*-bom.json
+            target/*-bom.xml
+            osv-results.json
+          if-no-files-found: warn
+
+  # Byte-reproducible build gate. Builds the dist artifact twice (clean
+  # between), with the fixed project.build.outputTimestamp from the pom
+  # normalizing every archive entry's timestamp and order. If the two
+  # sha256 digests of target/*dist*.zip differ, the build is not
+  # reproducible and the job fails. The dist zip is emitted by the
+  # maven-assembly-plugin `build-dist-zip` execution bound to the `package`
+  # phase (target/sonar-predictor-dist-<version>.zip), so `package` is the
+  # exact goal that produces it; -DskipTests still runs the
+  # process-test-classes shade execs the assembly's lib/ jars depend on.
+  reproducible:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Node.js (JS/TS analyzer tests need a Node runtime)
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Build dist (1st) and record digest
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -DskipTests clean package
+          ZIP1=$(ls target/*dist*.zip | head -n1)
+          echo "First dist zip: $ZIP1"
+          sha256sum "$ZIP1" | awk '{print $1}' > /tmp/dist-hash-1.txt
+          cat /tmp/dist-hash-1.txt
+
+      - name: Build dist (2nd) and record digest
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -DskipTests clean package
+          ZIP2=$(ls target/*dist*.zip | head -n1)
+          echo "Second dist zip: $ZIP2"
+          sha256sum "$ZIP2" | awk '{print $1}' > /tmp/dist-hash-2.txt
+          cat /tmp/dist-hash-2.txt
+
+      - name: Compare digests (fail if not byte-reproducible)
+        run: |
+          set -euo pipefail
+          H1=$(cat /tmp/dist-hash-1.txt)
+          H2=$(cat /tmp/dist-hash-2.txt)
+          echo "Build 1: $H1"
+          echo "Build 2: $H2"
+          if [ "$H1" != "$H2" ]; then
+            echo "::error::Dist zip is not byte-reproducible ($H1 != $H2)."
+            exit 1
+          fi
+          echo "Dist zip is byte-reproducible: $H1"
+
+  # Hermetic offline build. First warms the local repo (~/.m2) and the
+  # plugins/ analyzer copies over the network, then proves `mvn -o clean
+  # verify` succeeds with NO network access. dependency:go-offline alone is
+  # insufficient: the maven-dependency-plugin `copy` executions fetch the 10
+  # analyzer jars (and the host jar is built locally), and Surefire resolves
+  # its JUnit-platform provider only when tests actually run — so a full
+  # `verify` (tests included) is run first to populate ~/.m2 and plugins/
+  # before the offline verify.
+  offline-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Node.js (JS/TS analyzer tests need a Node runtime)
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Warm local repo (resolve plugins, deps, analyzer copies, test providers)
+        run: |
+          set -euo pipefail
+          # Resolve the plugin/dependency graph...
+          mvn -B -ntp dependency:go-offline
+          # ...then a FULL verify (tests included) to populate ~/.m2 with the
+          # analyzer jars pulled by the dependency:copy executions, the local
+          # host/shade jars the assembly needs, AND Surefire's lazily-resolved
+          # JUnit-platform provider. dependency:go-offline does NOT fetch that
+          # provider and -DskipTests never triggers it, so without running the
+          # tests here the offline verify below fails resolving
+          # surefire-junit-platform.
+          mvn -B -ntp verify
+
+      - name: Offline verify (no network)
+        run: |
+          set -euo pipefail
+          # -o forces fully offline: any unresolved artifact fails here,
+          # proving the warmed repo is self-sufficient.
+          mvn -B -o clean verify

@@ -17,22 +17,6 @@ import org.sonarsource.sonarlint.core.commons.api.SonarLanguage;
  */
 public final class LanguageDetector {
 
-    /** v1 language set, in priority order — first registration wins on a shared suffix. */
-    private static final SonarLanguage[] SUPPORTED = {
-            SonarLanguage.JAVA,
-            SonarLanguage.PYTHON,
-            SonarLanguage.JS,
-            SonarLanguage.TS,
-            SonarLanguage.PHP,
-            SonarLanguage.KOTLIN,
-            SonarLanguage.GO,
-            SonarLanguage.RUBY,
-            SonarLanguage.SCALA,
-            SonarLanguage.HTML,
-            SonarLanguage.XML,
-            SonarLanguage.CSS,
-    };
-
     /** Lower-cased extension (no leading dot) -> language. */
     private static final Map<String, SonarLanguage> BY_EXTENSION = buildExtensionMap();
 
@@ -41,7 +25,7 @@ public final class LanguageDetector {
 
     private static Map<String, SonarLanguage> buildExtensionMap() {
         Map<String, SonarLanguage> map = new LinkedHashMap<>();
-        for (SonarLanguage language : SUPPORTED) {
+        for (SonarLanguage language : LanguageMap.detectionOrder()) {
             for (String suffix : language.getDefaultFileSuffixes()) {
                 String ext = normalizeExtension(suffix);
                 if (!ext.isEmpty()) {

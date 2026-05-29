@@ -1,0 +1,36 @@
+# Dependabot keeps the Maven dependency tree and the GitHub Actions used in
+# our workflows up to date. Weekly cadence keeps PR noise low for a project
+# whose third-party surface (Jackson, picocli, SonarSource analyzers) moves
+# slowly. Security updates from Dependabot complement the osv-scanner CVE
+# gate in ci.yml: the gate blocks, Dependabot proposes the fix.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Batch routine version bumps into one PR per ecosystem to cut churn;
+      # security updates still come through individually.
+      maven-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(ci)"

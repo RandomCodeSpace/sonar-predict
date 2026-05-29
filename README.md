@@ -49,6 +49,34 @@ mvn -B clean package
 # output: target/sonar-predictor-dist-0.2.0-SNAPSHOT.zip
 ```
 
+### Enterprise / air-gapped install
+
+For corporate or air-gapped machines that cannot reach GitHub or Maven Central,
+the bootstrap wrappers `scripts/sonar-cli.sh` (Linux/macOS) and
+`scripts/sonar-cli.ps1` (Windows) fetch the distribution zip — and, when no
+suitable Java is present, an Eclipse Temurin JDK — from an internal Nexus raw
+repository instead. Point them at it with `SONAR_NEXUS_BASE` (the raw-repo base
+URL, no trailing slash):
+
+```bash
+export SONAR_NEXUS_BASE=https://nexus.example.com/repository/raw-hosted
+./scripts/sonar-cli.sh check --diff
+```
+
+The wrappers verify artifact integrity before extracting anything:
+
+- `SONAR_DIST_SHA256` — expected lowercase-hex SHA-256 of the distribution zip.
+- `SONAR_JDK_SHA256` — expected SHA-256 of the JDK archive.
+- If those are unset, the wrapper fetches a `SHA256SUMS` sibling published next to
+  the artifact (one is published per release at
+  `{base}/sonar-predictor/{version}/SHA256SUMS`) and checks against that.
+- `SONAR_ALLOW_UNVERIFIED=1` — proceed when *no* expected hash can be found. This
+  bypasses integrity checking and prints a loud warning; not recommended.
+
+With none of the above resolvable the wrapper refuses to extract unverified bytes.
+You can also verify by hand before running — e.g. `sha256sum -c SHA256SUMS` — since
+the wrappers use the same `sha256sum` (Linux) / `shasum -a 256` (macOS) tooling.
+
 ## Usage
 
 ```bash
@@ -66,6 +94,33 @@ Output formats: `--format sarif|json|text` (SARIF is the default). Add `--config
 <profile.xml>` to use an imported SonarQube quality profile, or `--coverage <report>`
 (plus `--coverage-min N`) to fold in a JaCoCo / Cobertura / LCOV / Go / Clover /
 SimpleCov coverage report.
+
+A few more options on `check` / `analyze`:
+
+- `--save <path>` — write the formatted report (per `--format`) to a file instead
+  of stdout. Stdout then carries a compact summary (issue count plus severity/type
+  rollup and the target file), so an agent or CI step gets a usable signal without
+  parsing the report or needing `jq`.
+- `--test-path <glob>` — treat files matching the glob as test code (repeatable,
+  additive). Augments the built-in test-path detection (`src/test/**`, `*Test.java`,
+  `*_test.go`, `*.spec.ts`, …) for non-standard layouts, e.g.
+  `--test-path 'src/integration/**'`.
+
+### Provisioning the analyzer runtime (`setup`)
+
+The distribution zip already bundles the analyzers, so `setup` is only needed when
+you install from a thinner package or want to refresh `~/.sonar`:
+
+```bash
+# Provision into ~/.sonar from Maven Central (default)
+./bin/sonar setup
+
+# Pull the analyzer/engine JARs from a private Maven mirror / Nexus
+./bin/sonar setup --repo https://nexus.example.com/repository/maven-public
+
+# Fully offline: provision from a local .tar.gz runtime bundle (no network)
+./bin/sonar setup --offline /path/to/sonar-runtime.tar.gz
+```
 
 ## Exit codes
 
@@ -106,6 +161,11 @@ The JSON output carries both fields on every issue.
 
 Nothing is downloaded at analysis time — the tool is fully offline once the zip is
 unpacked.
+
+A Windows bootstrap wrapper (`scripts/sonar-cli.ps1`, alongside the
+`scripts/sonar-cli.sh` POSIX one) ships for installing on Windows, but native
+Windows analysis is not yet supported: the CLI ↔ daemon transport relies on a
+Unix-domain (AF_UNIX) socket, so the daemon currently needs Linux, macOS, or WSL.
 
 ## Scope
 

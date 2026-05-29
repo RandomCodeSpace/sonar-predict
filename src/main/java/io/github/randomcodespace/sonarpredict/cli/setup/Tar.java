@@ -13,14 +13,15 @@ import java.util.Set;
 import java.util.zip.GZIPInputStream;
 
 /**
- * Minimal reader for {@code .tar.gz} archives — enough to extract a Temurin
- * JRE without pulling in a third-party archive library.
+ * Minimal reader for {@code .tar.gz} archives — enough to extract the runtime
+ * and plugin bundles this tool provisions without pulling in a third-party
+ * archive library.
  *
- * <p>Supports the USTAR fields the JRE archives use: regular files, directories,
- * the file mode (so {@code bin/java} stays executable), and the GNU long-name
- * extension ({@code 'L'} type-flag) some archives use for deep paths. Symbolic
- * links inside the archive are skipped — the Temurin JRE layout does not rely
- * on them for {@code bin/java}.
+ * <p>Supports the USTAR fields these archives use: regular files, directories,
+ * the file mode (so any extracted executable stays runnable), and the GNU
+ * long-name extension ({@code 'L'} type-flag) some archives use for deep paths.
+ * Symbolic links inside the archive are skipped — the bundles extracted here do
+ * not rely on them.
  *
  * <p><b>Path safety.</b> Each entry path is resolved against the destination
  * and rejected if it escapes it ({@code zip-slip} / {@code tar-slip}).
@@ -39,8 +40,9 @@ final class Tar {
     /**
      * Extracts a gzip-compressed tar stream into {@code destDir}, optionally
      * stripping the archive's single top-level directory component so that, for
-     * a {@code jdk-17.../bin/java} archive, {@code bin/java} lands directly
-     * under {@code destDir}.
+     * an archive wrapping its payload in one top-level folder (e.g.
+     * {@code bundle-1.2.3/bin/...}), the inner entries land directly under
+     * {@code destDir}.
      *
      * @param in           the {@code .tar.gz} stream
      * @param destDir      the directory to extract into
@@ -124,36 +126,30 @@ final class Tar {
     }
 
     /**
-     * Suppresses {@code java:S2612}: the {@code OTHERS_EXECUTE} bit is mirrored
-     * from the trusted Temurin JRE tar entry's recorded mode (Temurin ships
-     * shared binaries as world-executable so any user can run the JRE); we
-     * are not granting permissions beyond what the verified archive declares.
+     * Marks {@code file} owner-executable when the archive entry's mode carries
+     * any execute bit, so an extracted executable stays runnable by its owner.
+     * The archive's group- and other-execute bits are deliberately <em>not</em>
+     * mirrored: the daemon runs as the extracting user, owner execute is
+     * sufficient (see the non-POSIX fallback below, which has always granted
+     * owner-only), and the extracted bundle is not assumed to be trusted —
+     * granting world-execute from archive-declared bits would hand an
+     * attacker-influenced archive an unnecessary privilege. Owner being the only
+     * execute grant is also why this no longer trips {@code java:S2612}.
      */
-    @SuppressWarnings("java:S2612")
     private static void applyMode(Path file, int mode) {
         if ((mode & 0_111) == 0) {
-            return; // no execute bits set
+            return; // no execute bits set in the archive entry
         }
         try {
             Set<PosixFilePermission> perms =
                     EnumSet.copyOf(Files.getPosixFilePermissions(file));
-            if ((mode & 0_100) != 0) {
-                perms.add(PosixFilePermission.OWNER_EXECUTE);
-            }
-            if ((mode & 0_010) != 0) {
-                perms.add(PosixFilePermission.GROUP_EXECUTE);
-            }
-            if ((mode & 0_001) != 0) {
-                // NOSONAR(java:S2612) the execute bit is mirrored from the
-                // tar entry's recorded mode (Temurin JRE binaries ship as
-                // world-executable); we are not granting permissions beyond
-                // what the trusted archive declares.
-                perms.add(PosixFilePermission.OTHERS_EXECUTE);
-            }
+            // Clamp to owner-only execute regardless of the archive's group/other
+            // bits — extraction must never widen executability beyond the owner.
+            perms.add(PosixFilePermission.OWNER_EXECUTE);
             Files.setPosixFilePermissions(file, perms);
         } catch (UnsupportedOperationException | IOException notPosix) {
-            // Owner-only execute is sufficient for our extracted JRE binaries;
-            // group/other execute are not required for the daemon launcher path.
+            // Non-POSIX filesystem: owner-only execute is sufficient for our
+            // extracted binaries; group/other execute are not required.
             if (!file.toFile().setExecutable(true, true)) {
                 throw new UncheckedIOException(new IOException(
                         "could not mark " + file + " executable "

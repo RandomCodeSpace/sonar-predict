@@ -24,7 +24,7 @@ import io.github.randomcodespace.sonarpredict.protocol.SocketPaths;
  * {@code sonar.daemon.jar} system property; that is the supported override and
  * the mechanism Plan 7's {@code setup} command will use to point at an
  * installed runtime. With no property set it falls back to a dev default — the
- * newest {@code daemon/target/sonar-predictor-daemon-*.jar} (the shaded jar,
+ * newest {@code target/sonar-predictor-daemon-*.jar} (the shaded jar,
  * never the {@code original-} prefixed unshaded one), located relative to the
  * working directory or its ancestors.
  *
@@ -49,7 +49,7 @@ import io.github.randomcodespace.sonarpredict.protocol.SocketPaths;
  *
  * <p><b>Java runtime.</b> The daemon launches with the {@code java} named by
  * {@code -Dsonar.java.exe} when set — the distribution's {@code bin/sonar}
- * launcher sets it to a Java 17+ runtime it auto-discovered. With the property
+ * launcher sets it to a Java 21+ runtime it auto-discovered. With the property
  * absent the daemon launches with the current/system {@code java} that started
  * the CLI. No JRE is provisioned or bundled.
  */
@@ -64,7 +64,7 @@ public final class DaemonLauncher {
     /**
      * System property naming the {@code java} executable used to spawn the
      * daemon. The distribution's {@code bin/sonar} launcher sets it to the
-     * Java 17+ runtime it auto-discovered, so the daemon launches on a
+     * Java 21+ runtime it auto-discovered, so the daemon launches on a
      * verified-compatible JVM rather than whichever {@code java} happens to be
      * on {@code PATH}. Absent, the launcher falls back to the current JVM's
      * {@code java.home} (the dev default).
@@ -79,10 +79,24 @@ public final class DaemonLauncher {
      */
     public static final String DAEMON_PLUGINS_DIR_PROPERTY = "sonar.plugins.dir";
 
+    /**
+     * System property carrying the socket-version token to the spawned daemon
+     * so it resolves the identical version-keyed socket/pidfile names this
+     * launcher polls. The value is exactly the {@link SocketPaths#version()} of
+     * the paths this launcher was constructed with — relayed verbatim, never
+     * recomputed, so the two ends cannot disagree. Kept as a literal here
+     * because the {@code cli} module must not depend on the {@code daemon}
+     * module — both ends agree on the name.
+     */
+    public static final String SOCKET_VERSION_PROPERTY = "sonar.socket.version";
+
     /** Default bounded wait for the daemon socket to start accepting. */
     public static final Duration DEFAULT_STARTUP_TIMEOUT = Duration.ofSeconds(60);
 
     private static final String DAEMON_JAR_PREFIX = "sonar-predictor-daemon-";
+
+    /** Number of trailing {@code daemon.log} lines surfaced on a failed start. */
+    private static final int LOG_TAIL_LINES = 20;
 
     private final SocketPaths paths;
     private final Duration startupTimeout;
@@ -103,7 +117,7 @@ public final class DaemonLauncher {
 
     /**
      * Resolves the daemon fat jar: the {@code sonar.daemon.jar} property if set,
-     * otherwise the dev-default shaded jar under {@code daemon/target/}.
+     * otherwise the dev-default shaded jar under {@code target/}.
      *
      * @return the resolved jar path
      * @throws IllegalStateException if no jar can be located
@@ -180,7 +194,8 @@ public final class DaemonLauncher {
         if (!Files.isRegularFile(jar)) {
             throw new IllegalStateException("daemon jar does not exist: " + jar);
         }
-        List<String> command = buildSpawnCommand(jar, resolveProvisionedLayout());
+        List<String> command =
+                buildSpawnCommand(jar, resolveProvisionedLayout(), paths.version());
         ProcessBuilder builder = new ProcessBuilder(command);
         // The daemon resolves its plugins/ directory relative to its working
         // directory; run it from the module root that holds plugins/.
@@ -188,8 +203,17 @@ public final class DaemonLauncher {
         // The daemon resolves SocketPaths from its environment; force it onto
         // the same runtime directory this launcher expects.
         builder.environment().put("XDG_RUNTIME_DIR", paths.socket().getParent().toString());
-        builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        // Capture the detached child's stdout+stderr to a log file in the same
+        // runtime directory. A file redirect (not PIPE) is mandatory: the child
+        // is long-lived and detached, so there is no drain thread to consume a
+        // pipe — an unconsumed PIPE would eventually block the daemon. On the
+        // failure path awaitSocket() reads this log's tail to surface the
+        // child's real stack trace instead of a bare exit code. The daemon
+        // removes the log on stop (see Daemon.start's onStop), so a clean
+        // start/stop cycle leaves the runtime directory just as before.
+        Path log = logFile();
+        builder.redirectOutput(ProcessBuilder.Redirect.to(log.toFile()));
+        builder.redirectErrorStream(true);
         try {
             return builder.start();
         } catch (IOException e) {
@@ -197,11 +221,16 @@ public final class DaemonLauncher {
         }
     }
 
+    /** The daemon's startup log, beside the socket in the runtime directory. */
+    private Path logFile() {
+        return paths.socket().getParent().resolve("daemon.log");
+    }
+
     /**
      * Builds the JVM command line that launches the daemon.
      *
      * <p><b>Java runtime.</b> When {@code -Dsonar.java.exe} is set — the skill
-     * bundle's {@code bin/sonar} launcher sets it to the Java 17+ runtime it
+     * bundle's {@code bin/sonar} launcher sets it to the Java 21+ runtime it
      * auto-discovered — the daemon spawns with that executable. Absent, the
      * daemon launches with the current JVM's {@code java} (the dev default).
      *
@@ -214,16 +243,23 @@ public final class DaemonLauncher {
      * daemon resolves a {@code plugins/} directory relative to its working
      * directory.
      *
-     * @param jar         the daemon fat jar to run
-     * @param provisioned a fully provisioned runtime layout, or {@code null}
+     * @param jar           the daemon fat jar to run
+     * @param provisioned   a fully provisioned runtime layout, or {@code null}
+     * @param socketVersion the socket-version token to relay via
+     *                      {@code -Dsonar.socket.version}; {@code null}/blank
+     *                      omits it (the daemon then uses the bare socket name)
      * @return the command line for {@link ProcessBuilder}
      */
-    static List<String> buildSpawnCommand(Path jar, RuntimeLayout provisioned) {
+    static List<String> buildSpawnCommand(
+            Path jar, RuntimeLayout provisioned, String socketVersion) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
         String pluginsDir = resolvePluginsDir(provisioned);
         if (pluginsDir != null) {
             command.add("-D" + DAEMON_PLUGINS_DIR_PROPERTY + "=" + pluginsDir);
+        }
+        if (socketVersion != null && !socketVersion.isBlank()) {
+            command.add("-D" + SOCKET_VERSION_PROPERTY + "=" + socketVersion);
         }
         command.add("-jar");
         command.add(jar.toString());
@@ -284,9 +320,21 @@ public final class DaemonLauncher {
                 return;
             }
             if (!process.isAlive() && !isDaemonRunning()) {
-                throw new IllegalStateException(
-                        "daemon process exited (code " + process.exitValue()
-                                + ") before its socket began accepting connections");
+                int code = process.exitValue();
+                String message = "daemon process exited (code " + code
+                        + ") before its socket began accepting connections";
+                if (code == 0) {
+                    // Clean exit with no socket: the child detected a live
+                    // daemon and bowed out (lost the start race). Not a crash —
+                    // throw the bare message, no log tail (the log would only
+                    // hold the benign "another daemon already owns the socket"
+                    // notice, never a failure).
+                    throw new IllegalStateException(message);
+                }
+                // Genuine crash: the child JVM exited non-zero before binding.
+                // Surface the captured log tail so an air-gapped user sees the
+                // real stack trace instead of a bare exit code.
+                throw failureWithDiagnostics(message);
             }
             try {
                 Thread.sleep(20);
@@ -295,8 +343,45 @@ public final class DaemonLauncher {
                 throw new IllegalStateException("interrupted while waiting for the daemon", e);
             }
         }
-        throw new IllegalStateException(
+        throw failureWithDiagnostics(
                 "daemon socket did not start accepting within " + startupTimeout);
+    }
+
+    /**
+     * Builds an {@link IllegalStateException} for a genuine startup failure,
+     * appending the tail of the captured {@code daemon.log} when available so
+     * the child's real error is visible. The diagnostics path is best-effort
+     * and never throws: a missing or unreadable log just yields the bare
+     * {@code message}. When {@code SONAR_DEBUG} is set the same detail is also
+     * echoed to {@code stderr} for visibility in non-fatal flows.
+     */
+    private IllegalStateException failureWithDiagnostics(String message) {
+        String tail = readLogTail();
+        String detail = tail.isEmpty()
+                ? message
+                : message + System.lineSeparator()
+                        + "----- daemon.log (tail) -----" + System.lineSeparator()
+                        + tail;
+        if (!tail.isEmpty() && System.getenv("SONAR_DEBUG") != null) {
+            System.err.println(detail);
+        }
+        return new IllegalStateException(detail);
+    }
+
+    /** Last {@value #LOG_TAIL_LINES} lines of {@code daemon.log}, or "" if absent. */
+    private String readLogTail() {
+        Path log = logFile();
+        try {
+            if (!Files.isReadable(log)) {
+                return "";
+            }
+            List<String> lines = Files.readAllLines(log);
+            int from = Math.max(0, lines.size() - LOG_TAIL_LINES);
+            return String.join(System.lineSeparator(), lines.subList(from, lines.size()));
+        } catch (IOException | RuntimeException unreadable) {
+            // Diagnostics must never throw — fall back to no tail.
+            return "";
+        }
     }
 
     private static String javaExecutable() {
@@ -313,16 +398,12 @@ public final class DaemonLauncher {
         Path dir = Path.of("").toAbsolutePath();
         while (dir != null) {
             // Single-module layout: target/sonar-predictor-daemon-*.jar at the
-            // project root. Legacy multi-module: daemon/target/... — try both
-            // so a checkout of either generation still resolves.
-            for (Path candidate : new Path[] {
-                    dir.resolve("target"),
-                    dir.resolve("daemon").resolve("target") }) {
-                if (Files.isDirectory(candidate)) {
-                    Path jar = newestDaemonJar(candidate);
-                    if (jar != null) {
-                        return jar;
-                    }
+            // project root.
+            Path candidate = dir.resolve("target");
+            if (Files.isDirectory(candidate)) {
+                Path jar = newestDaemonJar(candidate);
+                if (jar != null) {
+                    return jar;
                 }
             }
             dir = dir.getParent();

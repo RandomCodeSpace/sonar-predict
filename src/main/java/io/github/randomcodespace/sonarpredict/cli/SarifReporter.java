@@ -47,8 +47,8 @@ public final class SarifReporter implements Reporter {
         ObjectNode tool = run.putObject("tool");
         ObjectNode driver = tool.putObject("driver");
         driver.put("name", "sonar-predictor");
-        driver.put("informationUri", "https://github.com/sonarcli/sonar-predictor");
-        driver.put("version", SonarCommand.VERSION);
+        driver.put("informationUri", "https://github.com/RandomCodeSpace/sonar-predict");
+        driver.put("version", SonarVersionProvider.version());
 
         // Distinct rule keys, in first-seen order, become driver.rules[].
         Set<String> ruleKeys = new LinkedHashSet<>();

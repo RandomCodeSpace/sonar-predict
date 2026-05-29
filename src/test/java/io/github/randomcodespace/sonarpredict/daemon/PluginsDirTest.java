@@ -1,12 +1,18 @@
 package io.github.randomcodespace.sonarpredict.daemon;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Verifies that the daemon's analyzer-plugin directory is configurable. The
@@ -51,5 +57,35 @@ class PluginsDirTest {
                 name -> "sonar.plugins.dir".equals(name) ? "/opt/plugins" : null);
         assertEquals(Path.of("/opt/plugins"), resolved,
                 "the system property must take precedence over the env var");
+    }
+
+    @Test
+    @DisplayName("forEachJar visits every *.jar and skips non-jar entries")
+    void forEachJar_visitsOnlyJars(@TempDir Path dir) throws Exception {
+        Files.createFile(dir.resolve("a-plugin.jar"));
+        Files.createFile(dir.resolve("b-plugin.jar"));
+        Files.createFile(dir.resolve("notes.txt"));
+        Files.createDirectory(dir.resolve("sub.jar.d"));
+
+        List<String> visited = new ArrayList<>();
+        PluginsDir.forEachJar(dir, jar -> visited.add(jar.getFileName().toString()));
+
+        assertEquals(2, visited.size(), "only the two *.jar files must be visited");
+        assertTrue(visited.contains("a-plugin.jar") && visited.contains("b-plugin.jar"),
+                "both plugin jars must be visited, got: " + visited);
+    }
+
+    @Test
+    @DisplayName("forEachJar throws IllegalStateException naming the directory when no jars are present")
+    void forEachJar_emptyDir_throws(@TempDir Path dir) throws Exception {
+        Files.createFile(dir.resolve("readme.md"));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> PluginsDir.forEachJar(dir, jar -> {
+                    throw new AssertionError("the action must not run when no jars exist");
+                }));
+        assertTrue(ex.getMessage().contains("no analyzer plugin JARs in")
+                        && ex.getMessage().contains(dir.toAbsolutePath().toString()),
+                "the empty-dir error must name the directory, got: " + ex.getMessage());
     }
 }

@@ -1,8 +1,10 @@
 package io.github.randomcodespace.sonarpredict.daemon;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -10,6 +12,7 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 
 import org.junit.jupiter.api.AfterAll;
@@ -93,6 +96,47 @@ class RequestDispatcherTest {
         RuleMetadata md = Json.mapper().convertValue(response.payload(), RuleMetadata.class);
         assertEquals("java:S1118", md.ruleKey());
         assertEquals("java", md.language());
+    }
+
+    @Test
+    @DisplayName("RULE_METADATA full catalog is byte-identical across repeated requests (cached)")
+    void ruleMetadata_fullCatalog_isByteIdenticalAcrossRequests() throws Exception {
+        RequestDispatcher dispatcher = dispatcher(new AtomicBoolean());
+
+        // Null payload => full-catalog branch. Issue it twice against one dispatcher.
+        WireMessage first = dispatcher.dispatch(
+                new WireMessage("rm-all-1", Method.RULE_METADATA, null));
+        WireMessage second = dispatcher.dispatch(
+                new WireMessage("rm-all-2", Method.RULE_METADATA, null));
+
+        assertEquals(Method.RULE_METADATA, first.method());
+        assertTrue(first.payload().isArray(), "full catalog must serialize as a JSON array");
+        assertTrue(first.payload().size() > 1000,
+                "expected the full analyzer catalog (>1000 rules), got: " + first.payload().size());
+        assertTrue(second.payload().isArray());
+
+        // Byte-identity is the load-bearing guarantee: serialize just the payload
+        // (ids differ by design) and compare the exact bytes the codec would emit.
+        byte[] firstBytes = Json.mapper().writeValueAsBytes(first.payload());
+        byte[] secondBytes = Json.mapper().writeValueAsBytes(second.payload());
+        assertArrayEquals(firstBytes, secondBytes,
+                "repeated full-catalog responses must be byte-identical");
+        assertTrue(firstBytes.length > 0, "full-catalog payload must be non-empty");
+
+        // The catalog data must actually be present (not an empty array of stubs).
+        List<RuleMetadata> rules = List.of(
+                Json.mapper().convertValue(first.payload(), RuleMetadata[].class));
+        assertTrue(rules.stream().anyMatch(r -> "java:S1118".equals(r.ruleKey())),
+                "full catalog must contain java:S1118");
+
+        // The cache is actually used: the dispatcher returns the catalog's single
+        // memoized node, so both responses share its identity and equal a fresh
+        // build of the same catalog (proving the memoized copy == freshly-built).
+        JsonNode cached = service.ruleCatalog().allAsJsonNode();
+        assertSame(cached, second.payload(),
+                "full-catalog response must return the memoized catalog node");
+        assertEquals(Json.mapper().valueToTree(service.ruleCatalog().all()), cached,
+                "memoized catalog node must equal a freshly-serialized catalog");
     }
 
     @Test

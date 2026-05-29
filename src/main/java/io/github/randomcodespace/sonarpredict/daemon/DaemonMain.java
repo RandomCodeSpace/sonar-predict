@@ -30,7 +30,12 @@ public final class DaemonMain {
      *                              waiting for the daemon to stop
      */
     public static void main(String[] args) throws InterruptedException {
-        SocketPaths paths = SocketPaths.resolve();
+        // The launcher relays its SocketPaths.version() here so the daemon binds
+        // the identical version-keyed socket name the launcher polls. The
+        // property name is a literal: the daemon module must not depend on the
+        // cli module's DaemonLauncher — both ends agree on "sonar.socket.version".
+        String socketVersion = System.getProperty("sonar.socket.version", "");
+        SocketPaths paths = SocketPaths.resolve(System.getenv(), socketVersion);
         Daemon daemon = Daemon.start(paths, DaemonServer.DEFAULT_IDLE_TIMEOUT);
 
         if (!daemon.startedNewListener()) {

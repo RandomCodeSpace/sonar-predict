@@ -125,12 +125,28 @@ class CommandTest {
     }
 
     @Test
-    @DisplayName("version prints the CLI version and exits 0")
+    @DisplayName("version prints the runtime CLI version and exits 0")
     void versionExitsZero() {
         Run run = run(rpc(), control(), "version");
 
         assertEquals(0, run.exitCode(), "version must exit 0");
         assertFalse(run.out().isBlank(), "version must print something");
+        assertTrue(run.out().contains(SonarVersionProvider.version()),
+                "version must report the runtime build version, got: " + run.out());
+        assertFalse(run.out().contains("0.1.0"),
+                "version must not report the stale 0.1.0 literal, got: " + run.out());
+    }
+
+    @Test
+    @DisplayName("--version reports the runtime CLI version (not the stale literal)")
+    void versionFlagReportsRuntimeVersion() {
+        Run run = run(rpc(), control(), "--version");
+
+        assertEquals(0, run.exitCode(), "--version must exit 0");
+        assertTrue(run.out().contains(SonarVersionProvider.version()),
+                "--version must report the runtime build version, got: " + run.out());
+        assertFalse(run.out().contains("0.1.0"),
+                "--version must not report the stale 0.1.0 literal, got: " + run.out());
     }
 
     @Test
@@ -337,6 +353,39 @@ class CommandTest {
         // assert their absence so the summary stays compact.
         assertFalse(run.out().contains("severity:"),
                 "no severity rollup when there are no issues, got: " + run.out());
+    }
+
+    @Test
+    @DisplayName("--timings prints round-trip to stderr and leaves stdout byte-identical")
+    void timingsAreStderrOnlyAndStdoutUnchanged(@TempDir Path dir) throws Exception {
+        Path file = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        // The same canned response drives both runs so any stdout difference
+        // can only come from the --timings flag itself.
+        List<Issue> issues = List.of(issue("Bad.java", "java:S1118", "MAJOR"));
+
+        StubRpc baseline = rpc();
+        baseline.analyzeResult = new AnalyzeResponse(issues, List.of());
+        Run without = run(baseline, control(), "check", file.toString());
+
+        StubRpc timed = rpc();
+        timed.analyzeResult = new AnalyzeResponse(issues, List.of());
+        Run with = run(timed, control(), "--timings", "check", file.toString());
+
+        // Equivalence guarantee: stdout is byte-identical with and without the flag.
+        assertEquals(without.out(), with.out(),
+                "stdout must be identical whether or not --timings is set");
+        assertEquals(without.exitCode(), with.exitCode(),
+                "exit code must be unaffected by --timings");
+
+        // Without the flag, no extra timing noise leaks to stderr.
+        assertFalse(without.err().contains("analyze round-trip"),
+                "no timing line without --timings, got: " + without.err());
+
+        // With the flag, the timing line lands on stderr.
+        assertTrue(with.err().contains("analyze round-trip"),
+                "--timings must print the round-trip to stderr, got: " + with.err());
+        assertTrue(with.err().contains("ms"),
+                "--timings line must report milliseconds, got: " + with.err());
     }
 
     @Test
