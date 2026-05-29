@@ -46,12 +46,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history for git archive + release notes)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Set up JDK 21 + GPG
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
           java-version: '21'
@@ -62,7 +62,7 @@ jobs:
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
       - name: Set up Node.js (JS analyzer tests need a Node runtime)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.4.0
         with:
           node-version: '20'
 
@@ -114,6 +114,56 @@ jobs:
           set -euo pipefail
           mvn -B -ntp -Prelease clean deploy
 
+      - name: Compute SHA256SUMS for release assets
+        # The bootstrap wrappers (scripts/sonar-cli.{sh,ps1}) verify the dist
+        # zip against a pinned SHA-256 before extracting. They read the expected
+        # hash from a sibling SHA256SUMS file at the same base URL, so emit one
+        # here. Entries use bare filenames (no path) so the wrappers can match
+        # by artifact name. Signing/attestation is a separate, out-of-scope item.
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          SRC_ZIP="sonar-predict-${VERSION}-src.zip"
+          DIST_ZIP="target/sonar-predictor-dist-${VERSION}.zip"
+          if [ ! -f "${DIST_ZIP}" ]; then
+            echo "::error::distribution bundle not found at ${DIST_ZIP}"
+            ls -la target || true
+            exit 1
+          fi
+          : > SHA256SUMS
+          ( cd "$(dirname "${DIST_ZIP}")" && sha256sum "$(basename "${DIST_ZIP}")" ) >> SHA256SUMS
+          if [ -f "${SRC_ZIP}" ]; then
+            sha256sum "${SRC_ZIP}" >> SHA256SUMS
+          fi
+          echo "SHA256SUMS:"
+          cat SHA256SUMS
+
+      - name: GPG-sign release assets (detached, armored)
+        # Detached signatures over the release assets, using the SAME GPG key
+        # already imported by setup-java above (gpg-private-key /
+        # gpg-passphrase). Consumers can verify the dist zip and the checksum
+        # manifest against the project's public key. This is the GitHub-Release
+        # counterpart to the Central deploy's maven-gpg-plugin signing — both
+        # use the same key; neither replaces the other.
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          SRC_ZIP="sonar-predict-${VERSION}-src.zip"
+          DIST_ZIP="target/sonar-predictor-dist-${VERSION}.zip"
+          sign() {
+            gpg --batch --yes --pinentry-mode loopback \
+              --passphrase "${MAVEN_GPG_PASSPHRASE}" \
+              --armor --detach-sign "$1"
+            echo "Signed $1 -> $1.asc"
+          }
+          sign SHA256SUMS
+          sign "${DIST_ZIP}"
+          if [ -f "${SRC_ZIP}" ]; then
+            sign "${SRC_ZIP}"
+          fi
+
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -132,8 +182,17 @@ jobs:
           else
             TAG="v${VERSION}"
           fi
+          ASSETS=(
+            "${SRC_ZIP}"
+            "${DIST_ZIP}"
+            "SHA256SUMS"
+            "SHA256SUMS.asc"
+            "${DIST_ZIP}.asc"
+          )
+          if [ -f "${SRC_ZIP}.asc" ]; then
+            ASSETS+=("${SRC_ZIP}.asc")
+          fi
           gh release create "${TAG}" \
             --title "sonar-predictor ${VERSION}" \
             --generate-notes \
-            "${SRC_ZIP}" \
-            "${DIST_ZIP}"
+            "${ASSETS[@]}"

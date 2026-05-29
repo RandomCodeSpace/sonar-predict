@@ -18,9 +18,27 @@
 #   SONAR_PREDICTOR_HOME      Default: $env:USERPROFILE\.sonar-predictor
 #   SONAR_PREDICTOR_FORCE     "1" to re-download even if cached
 #
+# Integrity verification (fail-closed by default):
+#   Every artifact (dist zip, JDK zip) is SHA-256-verified against a pinned
+#   expected value BEFORE it is extracted or moved into place. This mirrors the
+#   download->verify->promote contract the Java Downloader enforces, and matters
+#   most for the JDK: it is the trust root that runs every downstream in-JVM
+#   check, so an unverified JDK makes those checks moot.
+#
+#   SONAR_DIST_SHA256         Expected lowercase-hex SHA-256 of the dist zip.
+#   SONAR_JDK_SHA256          Expected lowercase-hex SHA-256 of the JDK zip.
+#   If unset, the expected hash is read from a sibling checksum file at the SAME
+#   base URL the artifact came from (SHA256SUMS for the dist; <zip>.sha256.txt
+#   for Adoptium JDKs).
+#   SONAR_ALLOW_UNVERIFIED    "1" to proceed when NO expected hash can be
+#                             obtained. Prints a loud warning. Default (unset)
+#                             refuses — no unverified bytes are extracted.
+#
 # Nexus path conventions (rename if your layout differs):
 #   {base}/sonar-predictor/{version}/sonar-predictor-dist-{version}.zip
+#   {base}/sonar-predictor/{version}/SHA256SUMS  (sibling; lists dist-{version}.zip)
 #   {base}/temurin/21/windows-{arch}.zip
+#   {base}/temurin/21/windows-{arch}.zip.sha256.txt  (Adoptium sibling checksum)
 #
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\sonar-cli.ps1 -- <sonar args>
 
@@ -74,6 +92,89 @@ function Fetch([string]$Url, [string]$Target) {
     Move-Item $tmp $Target
 }
 
+# Fetch-Optional — like Fetch, but returns $false instead of dying when the URL
+# is absent (used for sibling checksum files, which may not exist on every
+# mirror). Leaves no partial behind on failure.
+function Fetch-Optional([string]$Url, [string]$Target) {
+    $dir = Split-Path -Parent $Target
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $tmp = "$Target.partial"
+    if (Test-Path $tmp) { Remove-Item $tmp -Force }
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+    } catch {
+        if (Test-Path $tmp) { Remove-Item $tmp -Force }
+        return $false
+    }
+    if (Test-Path $Target) { Remove-Item $Target -Force }
+    Move-Item $tmp $Target
+    return $true
+}
+
+# --- Integrity verification ------------------------------------------------
+# Get-Sha256 — lowercase-hex SHA-256 of a file via Get-FileHash (built in).
+function Get-Sha256([string]$File) {
+    return (Get-FileHash -Path $File -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+# Get-ChecksumForArtifact — extracts the expected hash for $Name from a
+# checksum file. Handles both the multi-line GNU "<hash>  <name>" SHA256SUMS
+# format and a single bare/"<hash>  <name>" line (Adoptium .sha256.txt). Returns
+# the lowercase hash, or $null if not found.
+function Get-ChecksumForArtifact([string]$SumsFile, [string]$Name) {
+    $lines = Get-Content -Path $SumsFile -ErrorAction SilentlyContinue
+    if (-not $lines) { return $null }
+    foreach ($line in $lines) {
+        if ($line -match "[\s\*]$([regex]::Escape($Name))\s*$") {
+            return ($line -split '\s+')[0].ToLowerInvariant()
+        }
+    }
+    # Single-entry file: first line that begins with a 64-hex-char hash.
+    foreach ($line in $lines) {
+        if ($line -match '^\s*([0-9a-fA-F]{64})(\s|$)') {
+            return $Matches[1].ToLowerInvariant()
+        }
+    }
+    return $null
+}
+
+# Resolve-ExpectedSha — resolves the expected SHA-256 in priority order:
+#   1. $Override (explicit env value), if non-empty;
+#   2. the sibling checksum file fetched from $SumsUrl.
+# Returns the lowercase hash, or $null if none could be obtained.
+function Resolve-ExpectedSha([string]$Override, [string]$Name, [string]$SumsUrl, [string]$CacheDir) {
+    if ($Override) { return $Override.Trim().ToLowerInvariant() }
+    $sumsFile = Join-Path $CacheDir ([System.IO.Path]::GetFileName($SumsUrl))
+    if (Fetch-Optional $SumsUrl $sumsFile) {
+        return (Get-ChecksumForArtifact $sumsFile $Name)
+    }
+    return $null
+}
+
+# Verify-Artifact — verifies $File's SHA-256 against the resolved expected
+# value BEFORE any extract/move. On mismatch: deletes $File and dies non-zero,
+# naming expected vs actual. If no expected hash is obtainable: dies unless
+# SONAR_ALLOW_UNVERIFIED=1, in which case it prints a loud warning and returns.
+function Verify-Artifact([string]$File, [string]$Name, [string]$Override, [string]$SumsUrl) {
+    $cache = Split-Path -Parent $File
+    $expected = Resolve-ExpectedSha $Override $Name $SumsUrl $cache
+    if (-not $expected) {
+        if ($env:SONAR_ALLOW_UNVERIFIED -eq '1') {
+            Write-Warning "sonar-cli: no SHA-256 available for $Name; proceeding UNVERIFIED"
+            Write-Warning "sonar-cli: SONAR_ALLOW_UNVERIFIED=1 bypasses integrity checks — this is NOT recommended."
+            return
+        }
+        if (Test-Path $File) { Remove-Item $File -Force }
+        Die "no expected SHA-256 for $Name (set SONAR_DIST_SHA256/SONAR_JDK_SHA256, publish a sibling checksum file, or set SONAR_ALLOW_UNVERIFIED=1 to override). Refusing to extract unverified bytes."
+    }
+    $actual = Get-Sha256 $File
+    if ($actual -ne $expected) {
+        if (Test-Path $File) { Remove-Item $File -Force }
+        Die "SHA-256 mismatch for ${Name}: expected $expected but got $actual. Refusing to extract."
+    }
+    Write-Host "  verified $Name (sha256 $expected)"
+}
+
 # --- Bundle ---------------------------------------------------------------
 $DistDir      = Join-Path $HomeDir "dist\$Version"
 $BundleDir    = Join-Path $DistDir 'sonar-predictor'
@@ -82,9 +183,13 @@ $BundleMarker = Join-Path $BundleDir 'bin\sonar.bat'
 function Ensure-Bundle {
     if ($env:SONAR_PREDICTOR_FORCE -ne '1' -and (Test-Path $BundleMarker)) { return }
     Write-Host "sonar-cli: provisioning sonar-predictor $Version into $DistDir"
-    $zip = Join-Path $HomeDir "cache\sonar-predictor-dist-$Version.zip"
-    $url = "$NexusBase/sonar-predictor/$Version/sonar-predictor-dist-$Version.zip"
+    $zip  = Join-Path $HomeDir "cache\sonar-predictor-dist-$Version.zip"
+    $name = "sonar-predictor-dist-$Version.zip"
+    $url  = "$NexusBase/sonar-predictor/$Version/$name"
+    $sumsUrl = "$NexusBase/sonar-predictor/$Version/SHA256SUMS"
     Fetch $url $zip
+    # Verify integrity BEFORE extracting or touching the install location.
+    Verify-Artifact $zip $name $env:SONAR_DIST_SHA256 $sumsUrl
     if (Test-Path $DistDir) { Remove-Item $DistDir -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
     try {
@@ -148,8 +253,13 @@ function Ensure-CachedJdk {
     if ((Test-Path $JdkMarker) -and (Test-JavaMinPlus $JdkMarker)) { return }
     Write-Host "sonar-cli: provisioning Temurin JDK 21 ($Os-$arch) into $JdkDir"
     $archive = Join-Path $HomeDir "cache\temurin-21-$Os-$arch.zip"
-    $url     = "$NexusBase/temurin/21/$Os-$arch.zip"
+    $name    = "$Os-$arch.zip"
+    $url     = "$NexusBase/temurin/21/$name"
+    $sumsUrl = "$url.sha256.txt"
     Fetch $url $archive
+    # Verify integrity BEFORE extracting — the JDK is the trust root that runs
+    # every downstream in-JVM SHA-256 check, so this gate is the critical one.
+    Verify-Artifact $archive $name $env:SONAR_JDK_SHA256 $sumsUrl
 
     $stage = Join-Path $HomeDir "cache\jdk-stage-$PID"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
