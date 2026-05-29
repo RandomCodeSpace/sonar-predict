@@ -340,6 +340,39 @@ class CommandTest {
     }
 
     @Test
+    @DisplayName("--timings prints round-trip to stderr and leaves stdout byte-identical")
+    void timingsAreStderrOnlyAndStdoutUnchanged(@TempDir Path dir) throws Exception {
+        Path file = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");
+        // The same canned response drives both runs so any stdout difference
+        // can only come from the --timings flag itself.
+        List<Issue> issues = List.of(issue("Bad.java", "java:S1118", "MAJOR"));
+
+        StubRpc baseline = rpc();
+        baseline.analyzeResult = new AnalyzeResponse(issues, List.of());
+        Run without = run(baseline, control(), "check", file.toString());
+
+        StubRpc timed = rpc();
+        timed.analyzeResult = new AnalyzeResponse(issues, List.of());
+        Run with = run(timed, control(), "--timings", "check", file.toString());
+
+        // Equivalence guarantee: stdout is byte-identical with and without the flag.
+        assertEquals(without.out(), with.out(),
+                "stdout must be identical whether or not --timings is set");
+        assertEquals(without.exitCode(), with.exitCode(),
+                "exit code must be unaffected by --timings");
+
+        // Without the flag, no extra timing noise leaks to stderr.
+        assertFalse(without.err().contains("analyze round-trip"),
+                "no timing line without --timings, got: " + without.err());
+
+        // With the flag, the timing line lands on stderr.
+        assertTrue(with.err().contains("analyze round-trip"),
+                "--timings must print the round-trip to stderr, got: " + with.err());
+        assertTrue(with.err().contains("ms"),
+                "--timings line must report milliseconds, got: " + with.err());
+    }
+
+    @Test
     @DisplayName("--severity filters out issues below the minimum before the exit-code decision")
     void severityFilterChangesExitCode(@TempDir Path dir) throws Exception {
         Path file = Files.writeString(dir.resolve("Bad.java"), "class Bad {}");

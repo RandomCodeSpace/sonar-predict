@@ -119,6 +119,10 @@ public final class SonarCommand implements Runnable {
                     "Removes the need for jq in agent wrappers."})
     private String savePath;
 
+    @Option(names = "--timings",
+            description = "Print the daemon analyze round-trip time to stderr.")
+    private boolean timings = false;
+
     @Spec
     private CommandSpec spec;
 
@@ -188,7 +192,15 @@ public final class SonarCommand implements Runnable {
                 additionalTestPaths != null
                         ? List.copyOf(additionalTestPaths)
                         : List.of());
+        long analyzeStartNanos = System.nanoTime();
         AnalyzeResponse response = rpc.analyze(request);
+        if (timings) {
+            // Timing goes to stderr only — stdout (the report / --save summary)
+            // stays byte-identical whether or not --timings is set.
+            long elapsedMs = (System.nanoTime() - analyzeStartNanos) / 1_000_000L;
+            spec.commandLine().getErr()
+                    .printf("sonar: analyze round-trip %d ms%n", elapsedMs);
+        }
 
         List<Issue> filtered = response.issues().stream()
                 .filter(issue -> severity.accepts(issue.severity()))

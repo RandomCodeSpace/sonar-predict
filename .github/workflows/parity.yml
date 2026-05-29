@@ -127,6 +127,20 @@ jobs:
             exit "$rc"
           fi
 
+      # Informational only (non-gating): scan a fixture twice through the same
+      # (now-warm) daemon with --timings, echoing both analyze round-trip lines
+      # from stderr. Cold vs warm gives a rough sense of daemon reuse savings.
+      - name: Warm-scan benchmark (--timings, informational)
+        continue-on-error: true
+        run: |
+          set +e
+          export SONAR_PREDICTOR_HOME="$(pwd)/target/sonar-predictor-dist-${{ steps.version.outputs.version }}/sonar-predictor"
+          echo "--- first (cold) scan ---"
+          "$SONAR_PREDICTOR_HOME/bin/sonar" --timings --format json analyze . >/dev/null
+          echo "--- second (warm) scan ---"
+          "$SONAR_PREDICTOR_HOME/bin/sonar" --timings --format json analyze . >/dev/null
+          exit 0
+
       # --- (B) SonarQube Cloud scan ------------------------------------------
 
       - name: Run SonarQube Cloud scan
